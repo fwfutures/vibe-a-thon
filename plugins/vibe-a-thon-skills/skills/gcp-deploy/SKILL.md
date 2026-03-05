@@ -93,6 +93,35 @@ gcloud run services describe SERVICE --region REGION --format "value(status.url)
 gcloud run services delete SERVICE --region REGION
 ```
 
+## Build Failure Diagnostics (Cloud Run `--source`)
+
+When `gcloud run deploy --source .` fails with a generic "Build failed" message, inspect Cloud Build directly:
+
+```bash
+# 1) List recent builds (global default)
+gcloud builds list --limit=10 --sort-by=~createTime
+
+# 2) Show details, including logUrl and per-step status
+gcloud builds describe BUILD_ID
+
+# 3) Stream logs for that build
+gcloud builds log BUILD_ID --stream
+```
+
+For regional/2nd-gen build resources, include `--region`:
+
+```bash
+gcloud builds list --region REGION --limit=10 --sort-by=~createTime
+gcloud builds describe BUILD_ID --region REGION
+gcloud builds log BUILD_ID --region REGION --stream
+```
+
+If no build is visible after a failed source deploy, run an explicit build to surface the exact Docker push/build error:
+
+```bash
+gcloud builds submit --tag REGION-docker.pkg.dev/PROJECT_ID/REPO/IMAGE:debug
+```
+
 ## CI/Headless Auth
 
 ```bash
@@ -104,9 +133,31 @@ gcloud config set project PROJECT_ID
 
 | Issue | Fix |
 |---|---|
-| Build fails | Check Dockerfile locally: `docker build .` |
+| Build fails (generic from `run deploy`) | Use `gcloud builds list`, `gcloud builds describe BUILD_ID`, and `gcloud builds log BUILD_ID --stream` |
+| Build cannot push image (`artifactregistry.repositories.uploadArtifacts` denied) | Grant build SA `roles/artifactregistry.writer` on project/repo; if needed also grant `roles/logging.logWriter` |
 | 403 on deploy | Need `roles/run.admin` and `roles/cloudbuild.builds.editor` |
 | App crashes on start | Check logs: `gcloud run services logs tail SERVICE --region REGION` |
 | Port mismatch | Set `--port` to match app, or have app read `PORT` env var |
 | Cold start slow | Set `--min-instances 1` (stays warm, costs more) |
 | Timeout on long requests | Increase with `--timeout 300` (max 3600s) |
+
+### IAM fix for Artifact Registry push failures
+
+```bash
+PROJECT_ID=your-project-id
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+
+# Build SA may be compute default in newer projects
+BUILD_SA="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$BUILD_SA" \
+  --role="roles/artifactregistry.writer"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$BUILD_SA" \
+  --role="roles/logging.logWriter"
+```
+
+If your project uses the Cloud Build legacy SA, grant the same roles to:
+`$PROJECT_NUMBER@cloudbuild.gserviceaccount.com`.
