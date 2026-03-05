@@ -19,6 +19,7 @@ npx skills add fwfutures/vibe-a-thon -g
 | find-skills | Discover and install agent skills from the open ecosystem |
 | skill-development | Guidance on creating effective skills for Claude Code plugins |
 | setup-windows-dev | Set up a fresh Windows machine for Node.js development |
+| setup-mac-dev | Set up a fresh macOS machine for development (Homebrew, Node, uv, Python, skills) |
 
 ## License
 
