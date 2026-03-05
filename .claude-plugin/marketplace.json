@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "vibe-a-thon-marketplace",
+  "version": "1.0.0",
+  "description": "Agent skills for the Vibe-a-thon",
+  "owner": {
+    "name": "Freshwater Futures"
+  },
+  "plugins": [
+    {
+      "name": "vibe-a-thon-skills",
+      "description": "Agent skills for the Vibe-a-thon",
+      "source": "./plugins/vibe-a-thon-skills",
+      "category": "skills"
+    }
+  ]
+}
