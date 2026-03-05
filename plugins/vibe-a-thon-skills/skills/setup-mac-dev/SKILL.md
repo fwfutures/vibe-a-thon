@@ -1,11 +1,13 @@
 ---
 name: setup-mac-dev
-description: This skill should be used when the user asks to "set up a fresh Mac for development", "install Homebrew and Node on macOS", "prepare a new MacBook for coding", "install uv Python on Mac", or "fix missing node/npm/npx on macOS".
+description: This skill should be used when the user asks to "set up a fresh Mac for development", "install Homebrew and Node on macOS", "prepare a new MacBook for coding", "install Xcode Command Line Tools", "install uv Python on Mac", or "fix missing node/npm/npx on macOS".
 ---
 
 # macOS Development Setup
 
 Perform setup directly with tools. Do not offload commands to the user unless a GUI prompt or privileged approval is required.
+
+Use non-interactive flags wherever supported (`-y`, `--yes`, `NONINTERACTIVE=1`).
 
 Before starting, tell the user:
 
@@ -32,7 +34,7 @@ Interpretation:
 - If required tools already exist, skip reinstallation and keep going.
 - If `xcode-select -p` fails, treat missing Command Line Tools (CLT) as a likely blocker for `git` and Homebrew.
 
-## Step 2: Ensure Xcode Command Line Tools
+## Step 2: Ensure Xcode Command Line Tools (mandatory)
 
 If CLT is missing:
 
@@ -40,9 +42,22 @@ If CLT is missing:
 xcode-select --install
 ```
 
+Immediately trigger the installer when missing. Do not defer this step.
+
+If the goal is to avoid GUI approval prompts and sudo access is available, prefer a non-GUI install path:
+
+```bash
+CLT_LABEL="$(softwareupdate -l | awk -F'* ' '/Command Line Tools/ {print $2}' | sed 's/^ *//' | tail -n 1)"
+if [ -n "$CLT_LABEL" ]; then
+  sudo softwareupdate -i "$CLT_LABEL" --verbose
+fi
+```
+
 Notes:
 
 - This may open a system dialog and require user acceptance.
+- `xcode-select --install` does not support a `--yes` auto-approve flag.
+- Re-check with `xcode-select -p` after the install prompt is accepted.
 - Continue with user-local installs when CLT remains unavailable.
 
 ## Step 3: Install Homebrew when possible
