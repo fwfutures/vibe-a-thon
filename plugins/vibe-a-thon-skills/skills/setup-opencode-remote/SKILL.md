@@ -59,35 +59,7 @@ powershell -Command "Write-Output Windows"
 
 ---
 
-## Step 2: Collect user info
-
-Ask the user for two things:
-1. **Their email address** — used to tag the cloud computer so they can find it later
-2. **A project name** — a short name for what they're working on (e.g., "my-app", "website-redesign")
-
-Before asking, try to detect the email automatically:
-
-**macOS/Linux:**
-```bash
-git config --global user.email 2>/dev/null || gcloud config get-value account 2>/dev/null || echo "NOT_FOUND"
-```
-
-**Windows:**
-```
-powershell -Command "git config --global user.email 2>$null; if (-not $?) { & 'GCLOUD_CMD' config get-value account 2>$null }"
-```
-
-If an email is found, confirm it with the user: "I found your email as user@example.com — is that right, or would you like to use a different one?"
-
-If NOT_FOUND, ask: "What email address should I tag this workspace with? This helps identify your cloud computers later."
-
-Then ask: "What's a short name for your project? (e.g., 'my-app', 'website')"
-
-**Save these as USER_EMAIL and PROJECT_NAME.** Sanitize the project name for use as a GCP label (lowercase, alphanumeric and hyphens only, max 63 chars).
-
----
-
-## Step 3: Check and install gcloud CLI
+## Step 2: Check and install gcloud CLI
 
 ### macOS
 
@@ -140,7 +112,7 @@ export PATH="$HOME/google-cloud-sdk/bin:$PATH"
 
 ---
 
-## Step 4: Check and install OpenCode CLI
+## Step 3: Check and install OpenCode CLI
 
 ### macOS
 
@@ -193,7 +165,7 @@ export PATH="$HOME/.opencode/bin:$PATH"
 
 ---
 
-## Step 5: Sign in to Google Cloud
+## Step 4: Sign in to Google Cloud
 
 ### macOS/Linux
 
@@ -219,6 +191,36 @@ powershell -Command "& 'GCLOUD_CMD' auth list --format='value(account)' 2>$null"
 ```
 powershell -Command "& 'GCLOUD_CMD' config set project path26-489205"
 ```
+
+---
+
+## Step 5: Collect user info
+
+Now that gcloud and git are installed and authenticated, detect the user's email and ask for a project name.
+
+Try to detect the email automatically:
+
+**macOS/Linux:**
+```bash
+gcloud config get-value account 2>/dev/null || git config --global user.email 2>/dev/null || echo "NOT_FOUND"
+```
+
+**Windows:**
+```
+powershell -Command "& 'GCLOUD_CMD' config get-value account 2>$null"
+```
+If that returns nothing, try git:
+```
+powershell -Command "git config --global user.email 2>$null"
+```
+
+If an email is found, confirm it with the user: "I found your email as user@example.com — is that right, or would you like to use a different one?"
+
+If NOT_FOUND, ask: "What email address should I tag this workspace with? This helps identify your cloud computers later."
+
+Then ask: "What's a short name for your project? (e.g., 'my-app', 'website')"
+
+**Save these as USER_EMAIL and PROJECT_NAME.** Sanitize the project name for use as a GCP label (lowercase, alphanumeric and hyphens only, max 63 chars).
 
 ---
 
