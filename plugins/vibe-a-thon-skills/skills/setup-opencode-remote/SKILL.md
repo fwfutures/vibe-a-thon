@@ -70,6 +70,11 @@ Starter repo:   ~/fv-rome2rio-starter (cloned)
 Home directory: /home/ben
 GH_TOKEN:       Available (baked into template)
 
+Web Access
+----------
+Port slug:      my-app
+Dev server URL: https://my-app.path26.rome2rio.com (port 3000)
+
 Cloud Details
 -------------
 GCP Project:    path26-489205
@@ -102,6 +107,11 @@ OpenCode server: Running (tmux session: oc)
 Starter repo:   Not cloned yet
 Home directory: unknown
 GH_TOKEN:       Available (baked into template)
+
+Web Access
+----------
+Port slug:      Not registered yet
+Dev server URL: Not available yet
 
 Cloud Details
 -------------
@@ -140,6 +150,11 @@ Starter repo:   Not cloned yet
 Home directory: unknown
 GH_TOKEN:       Available (baked into template)
 
+Web Access
+----------
+Port slug:      Not registered yet
+Dev server URL: Not available yet
+
 Cloud Details
 -------------
 GCP Project:    path26-489205
@@ -150,6 +165,7 @@ External IP:    None (private instance)
 ```
 
 **Update the file whenever something changes:**
+- After registering port slug → change "Port slug: my-app" and "Dev server URL: https://my-app.path26.rome2rio.com (port 3000)"
 - After cloning starter repo → change "Starter repo: ~/fv-rome2rio-starter (cloned)"
 - After finding remote home dir → update "Home directory: /home/ben"
 - After installing persistent tunnel → change "Auto-reconnect: Installed (starts on login)"
@@ -186,7 +202,36 @@ powershell -Command "Write-Output Windows"
 
 ---
 
-## Step 2: Check and install gcloud CLI
+## Step 2: Ensure Python 3.11+ is available (macOS only)
+
+gcloud requires Python 3.11+. The system Python on older macOS is too old. Check and install if needed.
+
+**NEVER use `sudo` — it requires a terminal password prompt which will fail. Use `uv` instead — it installs Python to the user's home directory without sudo.**
+
+```bash
+python3 --version 2>/dev/null || echo "NOT_FOUND"
+```
+
+If NOT_FOUND or version is below 3.11:
+```bash
+# Install uv (fast Python installer — no sudo, no Homebrew needed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+
+# Install Python 3.12 via uv (installs to ~/.local/)
+uv python install 3.12
+
+# Verify
+python3 --version
+```
+
+If uv is already installed, just run `uv python install 3.12`.
+
+Skip this step on Windows and Linux (they have Python 3.11+ or gcloud bundles its own).
+
+---
+
+## Step 3: Check and install gcloud CLI
 
 ### macOS
 
@@ -194,9 +239,14 @@ powershell -Command "Write-Output Windows"
 which gcloud && gcloud --version | head -1 || echo "NOT_FOUND"
 ```
 
-If NOT_FOUND:
+If NOT_FOUND, try Homebrew first, fall back to standalone installer:
 ```bash
-brew install --cask google-cloud-sdk || echo "Install Homebrew first: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+if command -v brew &>/dev/null; then
+  brew install --cask google-cloud-sdk
+else
+  curl -fsSL https://sdk.cloud.google.com | bash -s -- --disable-prompts --install-dir="$HOME"
+  export PATH="$HOME/google-cloud-sdk/bin:$PATH"
+fi
 ```
 
 ### Windows
@@ -239,7 +289,7 @@ export PATH="$HOME/google-cloud-sdk/bin:$PATH"
 
 ---
 
-## Step 3: Check and install OpenCode CLI
+## Step 4: Check and install OpenCode CLI
 
 ### macOS
 
@@ -292,7 +342,7 @@ export PATH="$HOME/.opencode/bin:$PATH"
 
 ---
 
-## Step 4: Sign in to Google Cloud
+## Step 5: Sign in to Google Cloud
 
 ### macOS/Linux
 
@@ -321,7 +371,7 @@ powershell -Command "& 'GCLOUD_CMD' config set project path26-489205"
 
 ---
 
-## Step 5: Collect user info
+## Step 6: Collect user info
 
 Now that gcloud and git are installed and authenticated, detect the user's email and ask for a project name.
 
@@ -351,7 +401,7 @@ Then ask: "What's a short name for your project? (e.g., 'my-app', 'website')"
 
 ---
 
-## Step 6: Create the cloud workspace
+## Step 7: Create the cloud workspace
 
 Tell the user: "Creating your cloud workspace now. This takes about 2-3 minutes..."
 
@@ -444,7 +494,7 @@ Tell the user:
 
 ---
 
-## Step 7: Wait for the cloud computer to be ready
+## Step 8: Wait for the cloud computer to be ready
 
 Tell the user: "Waiting for your cloud computer to start (2-4 minutes on first boot)..."
 
@@ -470,7 +520,7 @@ If exit code 0 and output is non-empty → ready. Otherwise wait 10 seconds and 
 
 ---
 
-## Step 8: Install and start OpenCode on the cloud computer
+## Step 9: Install and start OpenCode on the cloud computer
 
 ### macOS/Linux
 
@@ -527,7 +577,7 @@ If this returns exit code 0 → server is running. If it shows "no server runnin
 
 ---
 
-## Step 9: Clone the starter repo
+## Step 10: Clone the starter repo
 
 After OpenCode server is running, clone the starter repo on the remote machine.
 
@@ -577,7 +627,38 @@ powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-4
 
 ---
 
-## Step 10: Create tunnel and connect via OpenCode desktop app
+## Step 11: Register port slug for web access
+
+Register a port slug so dev servers running on the cloud computer are accessible via `https://SLUG.path26.rome2rio.com`. The default port is 3000.
+
+Derive the slug from the PROJECT_NAME (sanitized: lowercase, alphanumeric + hyphens only).
+
+### macOS/Linux
+
+```bash
+PORT_SLUG=$(echo "PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-63)
+
+gcloud compute instances add-metadata "$INSTANCE_ID" \
+  --project="$PROJECT_ID" --zone="$ZONE" \
+  --metadata="freshvibe-port-slugs=[\"$PORT_SLUG\"]"
+
+echo "Port slug registered: https://${PORT_SLUG}.path26.rome2rio.com (port 3000)"
+```
+
+### Windows
+
+```
+powershell -Command "& 'GCLOUD_CMD' compute instances add-metadata 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --metadata='freshvibe-port-slugs=[""PORT_SLUG""]'"
+```
+
+Tell the user:
+> "When you start a dev server on port 3000, it'll be accessible at https://PORT_SLUG.path26.rome2rio.com"
+
+**Update devserver.txt** with the slug URL.
+
+---
+
+## Step 12: Create tunnel and connect via OpenCode desktop app
 
 ### 10a: Start the tunnel (MUST survive OpenCode restart)
 
