@@ -216,6 +216,10 @@ gcloud requires Python 3.11+. The system Python on older macOS is too old. Check
 
 **NEVER use `sudo` — it requires a terminal password prompt which will fail. Use `uv` instead — it installs Python to the user's home directory without sudo.**
 
+**NOTE**: On fresh macOS, commands like `python3`, `git`, and `gcloud` may trigger a popup asking to install Xcode Command Line Tools. If the user reports a popup, tell them: "Click 'Install' on the Xcode popup, wait for it to finish, then tell me when it's done." Alternatively, suppress the popup by running `xcode-select --install 2>/dev/null || true` before anything else.
+
+**NOTE**: After installing Python via uv, `python3` may NOT be on PATH in subsequent commands (each shell tool invocation starts a fresh shell). Always prefix python commands with `export PATH="$HOME/.local/bin:$PATH"` or use `uv run python3 -c '...'` instead of bare `python3`.
+
 ```bash
 python3 --version 2>/dev/null || echo "NOT_FOUND"
 ```
@@ -244,7 +248,7 @@ Skip this step on Windows and Linux (they have Python 3.11+ or gcloud bundles it
 ### macOS
 
 ```bash
-which gcloud && gcloud --version | head -1 || echo "NOT_FOUND"
+which gcloud 2>/dev/null && gcloud --version 2>/dev/null | head -1 || echo "NOT_FOUND"
 ```
 
 If NOT_FOUND, try Homebrew first, fall back to standalone installer:
@@ -286,7 +290,7 @@ Then re-run the check above to find the installed path.
 ### Linux
 
 ```bash
-which gcloud && gcloud --version | head -1 || echo "NOT_FOUND"
+which gcloud 2>/dev/null && gcloud --version 2>/dev/null | head -1 || echo "NOT_FOUND"
 ```
 
 If NOT_FOUND:
@@ -366,9 +370,13 @@ export PATH="$HOME/.opencode/bin:$PATH"
 
 ### macOS/Linux
 
+Run synchronously (it blocks until the user completes browser auth). **Do NOT background it with `&`. Do NOT manually construct OAuth URLs — `gcloud auth login` opens its own browser window.**
+
 ```bash
 gcloud auth login --project=path26-489205
 ```
+
+Tell the user: "A browser window will open for Google sign-in. Complete the sign-in there, then come back."
 
 ### Windows — NEVER run gcloud auth login synchronously (it will time out)
 
@@ -392,6 +400,8 @@ powershell -Command "& 'GCLOUD_CMD' config set project path26-489205"
 ---
 
 ## Step 6: Collect user info
+
+**IMPORTANT: Do NOT ask for email or project name until auth is fully confirmed. Do NOT ask during the auth flow (Step 5). Wait until you've verified the account with `gcloud auth list` below.**
 
 Now that gcloud and git are installed and authenticated, detect the user's email and ask for a project name.
 
@@ -563,7 +573,7 @@ gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
 
 # Add to PATH
 gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
-  --command='grep -q opencode ~/.bashrc || echo "export PATH=\$HOME/.opencode/bin:\$PATH" >> ~/.bashrc'
+  --command='touch ~/.bashrc ; grep -q opencode ~/.bashrc || echo "export PATH=\$HOME/.opencode/bin:\$PATH" >> ~/.bashrc'
 
 # Find the remote user's home directory
 REMOTE_HOME=$(gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --command='echo $HOME' --quiet 2>/dev/null | tr -d '\r\n')
@@ -615,6 +625,11 @@ If this returns exit code 0 → server is running. If it shows "no server runnin
 After OpenCode server is running, clone the starter repo on the remote machine.
 
 The default starter repo is `https://github.com/fwfutures/fv-rome2rio-starter.git`. If it's private, embed the token in the clone URL (same approach the web app uses).
+
+**Where to find GH_TOKEN**: Check in this order:
+1. Local `.env` file: `grep "^GH_TOKEN=" .env`
+2. Local env var: `echo $GH_TOKEN`
+3. Remote machine (baked into template): `gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --command='grep GH_TOKEN /etc/profile.d/freshvibe-runtime.sh'`
 
 ### macOS/Linux
 
@@ -724,128 +739,19 @@ powershell -Command "Start-Sleep -Seconds 10; try { $null = Invoke-WebRequest -U
 
 If TUNNEL_FAILED, wait longer and retry. If it keeps failing, go back to Step 8 and verify the OpenCode server is running.
 
-### 10b: Add server to OpenCode desktop app (so user just clicks to connect)
+### 10b: Connect OpenCode to the cloud workspace
 
-The OpenCode desktop app stores its server list in a JSON file. We can inject the remote server with password pre-filled so the user just opens the app and clicks on it.
+**DO NOT inject config into the OpenCode desktop app's .dat files.** The app overwrites those files from its in-memory state on launch/quit, wiping any injected entries.
 
-**macOS:**
+Instead, use ONE of these approaches:
+
+**Option A: CLI attach (recommended — most reliable)**
+
+This connects the TUI to the remote server. Works with both standalone CLI and desktop-bundled CLI.
+
+macOS/Linux:
 ```bash
-python3 -c "
-import json, os, sys
-
-store_path = os.path.expanduser('~/Library/Application Support/ai.opencode.desktop/opencode.global.dat')
-
-# Read existing store
-try:
-    with open(store_path) as f:
-        store = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    store = {}
-
-# Parse server data
-try:
-    server_data = json.loads(store.get('server', '{}'))
-except json.JSONDecodeError:
-    server_data = {}
-
-if 'list' not in server_data:
-    server_data['list'] = []
-
-# Remove any existing entry for localhost:4096
-server_data['list'] = [s for s in server_data['list'] if s.get('http', {}).get('url') != 'http://localhost:4096']
-
-# Add new entry
-server_data['list'].append({
-    'type': 'http',
-    'http': {
-        'url': 'http://localhost:4096',
-        'username': 'opencode',
-        'password': '$OPENCODE_PASSWORD'
-    },
-    'displayName': 'Cloud: $INSTANCE_ID'
-})
-
-store['server'] = json.dumps(server_data)
-
-with open(store_path, 'w') as f:
-    json.dump(store, f)
-
-print('Server added to OpenCode desktop app')
-"
-```
-
-Also set it as the default server:
-```bash
-python3 -c "
-import json, os
-store_path = os.path.expanduser('~/Library/Application Support/ai.opencode.desktop/opencode.settings.dat')
-try:
-    with open(store_path) as f:
-        settings = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    settings = {}
-settings['defaultServerUrl'] = 'http://localhost:4096'
-with open(store_path, 'w') as f:
-    json.dump(settings, f)
-print('Default server set to http://localhost:4096')
-"
-```
-
-**Windows:**
-```
-powershell -Command "
-  $storePath = \"$env:APPDATA\ai.opencode.desktop\opencode.global.dat\"
-  if (Test-Path $storePath) {
-    $store = Get-Content $storePath | ConvertFrom-Json
-  } else {
-    $store = @{}
-  }
-  $serverJson = if ($store.server) { $store.server } else { '{}' }
-  $serverData = $serverJson | ConvertFrom-Json
-  if (-not $serverData.list) { $serverData | Add-Member -NotePropertyName 'list' -NotePropertyValue @() }
-  $serverData.list = @($serverData.list | Where-Object { $_.http.url -ne 'http://localhost:4096' })
-  $newServer = @{ type='http'; http=@{ url='http://localhost:4096'; username='opencode'; password='OPENCODE_PASSWORD' }; displayName='Cloud: INSTANCE_ID' }
-  $serverData.list += $newServer
-  $store.server = ($serverData | ConvertTo-Json -Depth 10 -Compress)
-  $store | ConvertTo-Json -Depth 10 | Set-Content $storePath
-  Write-Output 'Server added to OpenCode desktop app'
-"
-```
-
-Set as default:
-```
-powershell -Command "
-  $settingsPath = \"$env:APPDATA\ai.opencode.desktop\opencode.settings.dat\"
-  if (Test-Path $settingsPath) { $s = Get-Content $settingsPath | ConvertFrom-Json } else { $s = @{} }
-  $s | Add-Member -NotePropertyName 'defaultServerUrl' -NotePropertyValue 'http://localhost:4096' -Force
-  $s | ConvertTo-Json | Set-Content $settingsPath
-  Write-Output 'Default server set'
-"
-```
-
-### 10c: Open the desktop app
-
-**macOS:**
-```bash
-open -a OpenCode
-```
-
-**Windows:**
-```
-powershell -Command "Start-Process 'OPENCODE_CMD'"
-```
-
-Or if the desktop app is at the default location:
-```
-powershell -Command "Start-Process '$env:LOCALAPPDATA\OpenCode\OpenCode.exe'"
-```
-
-**IMPORTANT**: The app must be restarted (or started fresh) after writing the store file. If it was already running, it will overwrite the changes on its next save. Tell the user to **quit and reopen** the app if it was already open.
-
-### 10d: Alternative — CLI attach (if desktop app isn't available)
-
-```bash
-opencode attach http://localhost:4096 --password "$OPENCODE_PASSWORD"
+OPENCODE_CMD attach http://localhost:4096 --password "$OPENCODE_PASSWORD"
 ```
 
 Windows:
@@ -853,13 +759,47 @@ Windows:
 powershell -Command "& 'OPENCODE_CMD' attach http://localhost:4096 --password 'OPENCODE_PASSWORD'"
 ```
 
+Tell the user: "OpenCode is now connected to your cloud workspace. You can start coding!"
+
+**Option B: Desktop app — add server manually**
+
+If the user prefers the desktop app, tell them:
+
+> "To connect the OpenCode desktop app to your cloud workspace:
+> 1. Open the OpenCode app
+> 2. Click the server icon (bottom-left) or go to Settings → Servers
+> 3. Click 'Add Server'
+> 4. Enter URL: `http://localhost:4096`
+> 5. Enter username: `opencode`
+> 6. Enter password: `OPENCODE_PASSWORD`
+> 7. Click Connect
+>
+> The tunnel is already running, so this will connect immediately."
+
+**Option C: Web UI**
+
+Open the OpenCode web interface in a browser:
+
+macOS/Linux:
+```bash
+open http://localhost:4096
+```
+
+Windows:
+```
+powershell -Command "Start-Process 'http://localhost:4096'"
+```
+
+The browser will prompt for username (`opencode`) and password (`OPENCODE_PASSWORD`).
+
 ### After connecting, tell the user:
 
-> "You're connected! OpenCode is now running on your cloud computer. The server 'Cloud: INSTANCE_ID' has been added to your OpenCode desktop app — just open the app and it will connect automatically."
+> "You're connected! OpenCode is now running on your cloud computer. Your workspace is tagged with your email (USER_EMAIL) and project (PROJECT_NAME)."
+>
+> "Password for reconnecting: OPENCODE_PASSWORD (also saved in devserver.txt)"
 
-If the instance has an external IP, also tell them:
-
-> "Your workspace is tagged with your email (USER_EMAIL) and project (PROJECT_NAME). If you start a dev server on port 3000, it'll be accessible at http://EXTERNAL_IP:3000"
+If a port slug was registered:
+> "When you start a dev server on port 3000, it'll be accessible at https://PORT_SLUG.path26.rome2rio.com"
 
 ---
 
@@ -878,25 +818,26 @@ cat > ~/opencode-workspace.sh << 'SCRIPT'
 INSTANCE_ID="INSTANCE_ID_HERE"
 PROJECT_ID="path26-489205"
 ZONE="europe-west1-b"
+GCLOUD="GCLOUD_PATH_HERE"  # replace with full path to gcloud (e.g., /usr/local/bin/gcloud or $HOME/google-cloud-sdk/bin/gcloud)
 
 case "$1" in
   start)
     echo "Starting your cloud workspace..."
-    gcloud compute instances start "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --quiet
+    "$GCLOUD" compute instances start "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --quiet
     echo "Waiting for it to be ready..."
     for i in $(seq 1 30); do
-      gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --command='curl -sf http://localhost:8080/health' --quiet 2>/dev/null && break
+      "$GCLOUD" compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --command='curl -sf http://localhost:8080/health' --quiet 2>/dev/null && break
       sleep 5
     done
     echo "Workspace is ready! Open OpenCode to connect."
     ;;
   stop)
     echo "Stopping your cloud workspace (files are saved)..."
-    gcloud compute instances stop "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --quiet
+    "$GCLOUD" compute instances stop "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --quiet
     echo "Stopped. Start again with: opencode-workspace start"
     ;;
   status)
-    STATUS=$(gcloud compute instances describe "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --format='value(status)' 2>/dev/null)
+    STATUS=$("$GCLOUD" compute instances describe "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --format='value(status)' 2>/dev/null)
     echo "Workspace: $INSTANCE_ID — $STATUS"
     ;;
   *)
@@ -905,10 +846,16 @@ case "$1" in
 esac
 SCRIPT
 chmod +x ~/opencode-workspace.sh
-ln -sf ~/opencode-workspace.sh /usr/local/bin/opencode-workspace 2>/dev/null || true
+
+# Add alias to shell profile (works without sudo)
+SHELL_RC="$HOME/.zshrc"
+[ -f "$HOME/.bashrc" ] && SHELL_RC="$HOME/.bashrc"
+touch "$SHELL_RC"
+grep -q opencode-workspace "$SHELL_RC" || echo 'alias opencode-workspace="$HOME/opencode-workspace.sh"' >> "$SHELL_RC"
 
 echo "Created ~/opencode-workspace.sh"
 echo "Usage: opencode-workspace start|stop|status"
+echo "(alias added to $SHELL_RC — restart your terminal or run: source $SHELL_RC)"
 ```
 
 Replace `INSTANCE_ID_HERE` with the actual instance ID.
@@ -963,6 +910,8 @@ INSTANCE_ID="INSTANCE_ID"  # replace with actual
 PROJECT_ID="${GCP_PROJECT_ID:-path26-489205}"
 ZONE="${GCP_GCE_ZONE:-europe-west1-b}"
 GCLOUD_PATH="$(which gcloud)"
+
+mkdir -p ~/Library/LaunchAgents
 
 cat > ~/Library/LaunchAgents/com.freshvibe.opencode-tunnel.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1102,6 +1051,8 @@ gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE"
 **tmux "no server running" error**: This means no tmux session exists. It's normal when first connecting or after `tmux kill-session`. Just start a new session.
 
 **"External IP not found; defaulting to IAP tunneling"**: This is normal — the instance may not have a public IP. IAP tunneling works fine. Do NOT try to fix this.
+
+**IAP/NumPy warnings on every SSH command**: Add `--quiet` to `gcloud compute ssh` commands to suppress "consider installing NumPy" and other warnings. These are harmless but noisy.
 
 ---
 
