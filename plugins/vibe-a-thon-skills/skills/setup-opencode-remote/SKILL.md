@@ -739,62 +739,83 @@ powershell -Command "Start-Sleep -Seconds 10; try { $null = Invoke-WebRequest -U
 
 If TUNNEL_FAILED, wait longer and retry. If it keeps failing, go back to Step 8 and verify the OpenCode server is running.
 
-### 10b: Connect OpenCode to the cloud workspace
+### 10b: Connect OpenCode desktop app to the cloud workspace
 
-**DO NOT inject config into the OpenCode desktop app's .dat files.** The app overwrites those files from its in-memory state on launch/quit, wiping any injected entries.
+The desktop app must be **quit first**, then we write the server config, then relaunch. The app loads `.dat` files on startup — if it's running, it will overwrite our changes from its in-memory state.
 
-Instead, use ONE of these approaches:
-
-**Option A: CLI attach (recommended — most reliable)**
-
-This connects the TUI to the remote server. Works with both standalone CLI and desktop-bundled CLI.
-
-macOS/Linux:
+**macOS:**
 ```bash
-OPENCODE_CMD attach http://localhost:4096 --password "$OPENCODE_PASSWORD"
+# 1. Quit the app if running
+osascript -e 'quit app "OpenCode"' 2>/dev/null
+sleep 2
+
+# 2. Set default server URL (read by Rust backend on startup, not overwritten by frontend)
+echo '{"defaultServerUrl":"http://localhost:4096"}' > ~/Library/Application\ Support/ai.opencode.desktop/opencode.settings.dat
+
+# 3. Add server with credentials to the server list
+python3 -c "
+import json, os
+path = os.path.expanduser('~/Library/Application Support/ai.opencode.desktop/opencode.global.dat')
+try:
+    with open(path) as f:
+        data = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+server = json.loads(data.get('server', '{}'))
+if 'list' not in server:
+    server['list'] = []
+server['list'] = [s for s in server['list'] if s.get('http', {}).get('url') != 'http://localhost:4096']
+server['list'].append({
+    'type': 'http',
+    'http': {'url': 'http://localhost:4096', 'username': 'opencode', 'password': '$OPENCODE_PASSWORD'},
+    'displayName': 'Cloud: $INSTANCE_ID'
+})
+data['server'] = json.dumps(server)
+with open(path, 'w') as f:
+    json.dump(data, f)
+print('Server added to OpenCode desktop app')
+"
+
+# 4. Relaunch
+open -a OpenCode
+echo "OpenCode desktop app launched with cloud workspace configured"
 ```
 
-Windows:
+**NOTE**: If `python3` was installed via uv, use the full path: `~/.local/share/uv/python/cpython-3.12.*/bin/python3` or `uv run python3 -c '...'`
+
+**Windows:**
 ```
-powershell -Command "& 'OPENCODE_CMD' attach http://localhost:4096 --password 'OPENCODE_PASSWORD'"
-```
+powershell -Command "
+  # 1. Quit the app if running
+  Get-Process OpenCode -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep 2
 
-Tell the user: "OpenCode is now connected to your cloud workspace. You can start coding!"
+  # 2. Set default server URL
+  '{""defaultServerUrl"":""http://localhost:4096""}' | Set-Content '$env:APPDATA\ai.opencode.desktop\opencode.settings.dat'
 
-**Option B: Desktop app — add server manually**
+  # 3. Add server with credentials
+  $globalPath = '$env:APPDATA\ai.opencode.desktop\opencode.global.dat'
+  if (Test-Path $globalPath) { $data = Get-Content $globalPath | ConvertFrom-Json } else { $data = @{} }
+  $serverJson = if ($data.server) { $data.server } else { '{}' }
+  $serverData = $serverJson | ConvertFrom-Json
+  if (-not $serverData.list) { $serverData | Add-Member -NotePropertyName 'list' -NotePropertyValue @() -Force }
+  $serverData.list = @($serverData.list | Where-Object { $_.http.url -ne 'http://localhost:4096' })
+  $newServer = @{ type='http'; http=@{ url='http://localhost:4096'; username='opencode'; password='OPENCODE_PASSWORD' }; displayName='Cloud: INSTANCE_ID' }
+  $serverData.list += $newServer
+  $data.server = ($serverData | ConvertTo-Json -Depth 10 -Compress)
+  $data | ConvertTo-Json -Depth 10 | Set-Content $globalPath
 
-If the user prefers the desktop app, tell them:
-
-> "To connect the OpenCode desktop app to your cloud workspace:
-> 1. Open the OpenCode app
-> 2. Click the server icon (bottom-left) or go to Settings → Servers
-> 3. Click 'Add Server'
-> 4. Enter URL: `http://localhost:4096`
-> 5. Enter username: `opencode`
-> 6. Enter password: `OPENCODE_PASSWORD`
-> 7. Click Connect
->
-> The tunnel is already running, so this will connect immediately."
-
-**Option C: Web UI**
-
-Open the OpenCode web interface in a browser:
-
-macOS/Linux:
-```bash
-open http://localhost:4096
-```
-
-Windows:
-```
-powershell -Command "Start-Process 'http://localhost:4096'"
+  # 4. Relaunch
+  Start-Process '$env:LOCALAPPDATA\OpenCode\OpenCode.exe'
+  Write-Output 'OpenCode desktop app launched with cloud workspace configured'
+"
 ```
 
-The browser will prompt for username (`opencode`) and password (`OPENCODE_PASSWORD`).
+**IMPORTANT**: Replace `OPENCODE_PASSWORD` and `INSTANCE_ID` with the actual values.
 
 ### After connecting, tell the user:
 
-> "You're connected! OpenCode is now running on your cloud computer. Your workspace is tagged with your email (USER_EMAIL) and project (PROJECT_NAME)."
+> "OpenCode is now open and connected to your cloud workspace. You should see 'Cloud: INSTANCE_ID' in the server list."
 >
 > "Password for reconnecting: OPENCODE_PASSWORD (also saved in devserver.txt)"
 
