@@ -400,24 +400,51 @@ If this returns exit code 0 → server is running. If it shows "no server runnin
 
 ## Step 9: Clone the starter repo
 
-After OpenCode server is running, clone the starter repo on the remote machine so there's a project to work with.
+After OpenCode server is running, clone the starter repo on the remote machine.
+
+The default starter repo is `https://github.com/fwfutures/fv-rome2rio-starter.git`. If it's private, embed the token in the clone URL (same approach the web app uses).
 
 ### macOS/Linux
 
+For public repos:
 ```bash
 gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
-  --command='cd ~ ; git clone https://github.com/fwfutures/fv-rome2rio-starter.git 2>/dev/null || echo "Already cloned"'
+  --command='cd ~ ; git clone https://github.com/fwfutures/fv-rome2rio-starter.git'
+```
+
+For private repos (embed token in URL, then strip it after):
+```bash
+GH_TOKEN="${GH_TOKEN:-$(grep "^GH_TOKEN=" .env 2>/dev/null | cut -d= -f2)}"
+
+gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
+  --command="cd ~ ; git clone https://x-access-token:${GH_TOKEN}@github.com/fwfutures/fv-rome2rio-starter.git"
+
+# Strip token from git remote so it doesn't persist in .git/config
+gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
+  --command='cd ~/fv-rome2rio-starter ; git remote set-url origin https://github.com/fwfutures/fv-rome2rio-starter.git'
 ```
 
 ### Windows
 
+For public repos:
 ```
 powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='cd ~ ; git clone https://github.com/fwfutures/fv-rome2rio-starter.git'"
 ```
 
-If the repo is private and cloning fails with "Authentication failed", the GH_TOKEN env var needs to be set on the instance. See "Baking GH_TOKEN into the instance template" below.
+For private repos — read token from .env file first:
+```
+powershell -Command "$token = (Select-String -Path '.env' -Pattern '^GH_TOKEN=(.+)$').Matches.Groups[1].Value; Write-Output $token"
+```
+**Save as GH_TOKEN_VALUE.** Then clone with embedded token:
+```
+powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='cd ~ ; git clone https://x-access-token:GH_TOKEN_VALUE@github.com/fwfutures/fv-rome2rio-starter.git'"
+```
+Strip token from remote:
+```
+powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='cd ~/fv-rome2rio-starter ; git remote set-url origin https://github.com/fwfutures/fv-rome2rio-starter.git'"
+```
 
-For private repos with GH_TOKEN already baked into the template, git will auto-authenticate via the credential helper.
+**IMPORTANT**: Always strip the token from the git remote after cloning. The token should NOT persist in `.git/config`.
 
 ---
 
