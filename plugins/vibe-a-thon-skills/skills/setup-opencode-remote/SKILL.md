@@ -178,6 +178,14 @@ External IP:    None (private instance)
 
 ---
 
+## CRITICAL: Never pass --metadata on `gcloud compute instances create` with a template
+
+When creating an instance from `--source-instance-template`, passing `--metadata=` **REPLACES** all template metadata (including the startup script!). Instead:
+1. Create the instance **without** `--metadata`
+2. Add custom metadata **after** creation using `gcloud compute instances add-metadata`
+
+This is the same approach the web app uses (`GcpComputeControl.addMetadata()`).
+
 ## CRITICAL: SSH on Windows uses PuTTY (plink.exe)
 
 The Google Cloud SDK on Windows ships with PuTTY (`plink.exe`), NOT OpenSSH. This means:
@@ -447,13 +455,18 @@ gcloud compute disks create "$DISK_NAME" \
   --labels="managed-by=freshvibe,owner=$OWNER_LABEL,project=$PROJECT_LABEL" \
   --quiet
 
-# Create the cloud computer with labels and metadata
+# Create the cloud computer — do NOT pass --metadata here (it would REPLACE the template metadata, wiping the startup script)
 gcloud compute instances create "$INSTANCE_ID" \
   --project="$PROJECT_ID" --zone="$ZONE" \
   --source-instance-template="$TEMPLATE" \
   --labels="managed-by=freshvibe,owner=$OWNER_LABEL,project=$PROJECT_LABEL" \
-  --metadata="freshvibe-owner-email-b64=$(echo -n 'USER_EMAIL' | base64),freshvibe-project-ids-b64=$(echo -n '[\"PROJECT_NAME\"]' | base64)" \
   --disk="name=$DISK_NAME,device-name=freshvibe-home,mode=rw,boot=no,auto-delete=no" \
+  --quiet
+
+# Add custom metadata AFTER creation (this MERGES with template metadata, preserving startup-script etc.)
+gcloud compute instances add-metadata "$INSTANCE_ID" \
+  --project="$PROJECT_ID" --zone="$ZONE" \
+  --metadata="freshvibe-owner-email-b64=$(echo -n 'USER_EMAIL' | base64),freshvibe-project-ids-b64=$(echo -n '[\"PROJECT_NAME\"]' | base64)" \
   --quiet
 
 echo "Created: $INSTANCE_ID"
@@ -482,9 +495,14 @@ Create disk:
 powershell -Command "& 'GCLOUD_CMD' compute disks create 'INSTANCE_ID-home' --project=path26-489205 --zone=europe-west1-b --size=10GB --type=pd-balanced --labels=managed-by=freshvibe,owner=OWNER_LABEL,project=PROJECT_LABEL --quiet"
 ```
 
-Create instance:
+Create instance — do NOT pass `--metadata` here (it replaces the template metadata, wiping the startup script):
 ```
-powershell -Command "& 'GCLOUD_CMD' compute instances create 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --source-instance-template=freshvibe-gce-template --labels=managed-by=freshvibe,owner=OWNER_LABEL,project=PROJECT_LABEL --metadata=freshvibe-owner-email-b64=EMAIL_B64,freshvibe-project-ids-b64=PROJECT_B64 --disk='name=INSTANCE_ID-home,device-name=freshvibe-home,mode=rw,boot=no,auto-delete=no' --quiet"
+powershell -Command "& 'GCLOUD_CMD' compute instances create 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --source-instance-template=freshvibe-gce-template --labels=managed-by=freshvibe,owner=OWNER_LABEL,project=PROJECT_LABEL --disk='name=INSTANCE_ID-home,device-name=freshvibe-home,mode=rw,boot=no,auto-delete=no' --quiet"
+```
+
+Add custom metadata AFTER creation (merges with template metadata):
+```
+powershell -Command "& 'GCLOUD_CMD' compute instances add-metadata 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --metadata=freshvibe-owner-email-b64=EMAIL_B64,freshvibe-project-ids-b64=PROJECT_B64 --quiet"
 ```
 
 ### After creation: get the external IP
@@ -547,9 +565,12 @@ gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
 gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
   --command='grep -q opencode ~/.bashrc || echo "export PATH=\$HOME/.opencode/bin:\$PATH" >> ~/.bashrc'
 
-# Start server in tmux (single simple command)
+# Find the remote user's home directory
+REMOTE_HOME=$(gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --command='echo $HOME' --quiet 2>/dev/null | tr -d '\r\n')
+
+# Start server in tmux — use bash -c to handle env var correctly
 gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
-  --command="PATH=\$HOME/.opencode/bin:\$PATH tmux new-session -d -s oc 'OPENCODE_SERVER_PASSWORD=$OPENCODE_PASSWORD opencode serve --port 4096 --hostname 0.0.0.0'"
+  --command="tmux new-session -d -s oc 'bash -c \"OPENCODE_SERVER_PASSWORD=$OPENCODE_PASSWORD ${REMOTE_HOME}/.opencode/bin/opencode serve --port 4096 --hostname 0.0.0.0\"'"
 
 echo "Password: $OPENCODE_PASSWORD"
 ```
@@ -567,18 +588,18 @@ Install opencode on remote:
 powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='curl -fsSL https://opencode.ai/install | bash'"
 ```
 
-Start the server. **Run exactly this command** — note: NO `&&`, NO `||`, NO `2>/dev/null`, NO `export`. The `PATH=...` prefix sets PATH for just this command, and the entire tmux command argument is wrapped in single quotes:
+Find the remote user's home directory first:
+```
+powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='echo $HOME' --quiet"
+```
+**Save the output as REMOTE_HOME** (e.g., `/home/ben`).
 
+Start the server using `bash -c` to handle the env var correctly:
 ```
-powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='PATH=/home/ben/.opencode/bin:/usr/local/bin:/usr/bin:/bin tmux new-session -d -s oc OPENCODE_SERVER_PASSWORD=OPENCODE_PASSWORD opencode serve --port 4096 --hostname 0.0.0.0'"
+powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='tmux new-session -d -s oc ""bash -c \""OPENCODE_SERVER_PASSWORD=OPENCODE_PASSWORD REMOTE_HOME/.opencode/bin/opencode serve --port 4096 --hostname 0.0.0.0\""""'"
 ```
 
-**IMPORTANT**: In the tmux command above, `OPENCODE_SERVER_PASSWORD=OPENCODE_PASSWORD` is passed as **arguments to tmux**, NOT as a shell export. tmux treats everything after `-s oc` as the command and its arguments. This is intentional — it avoids all quoting problems.
-
-**IMPORTANT**: Replace `/home/ben/` with the actual remote user's home directory. To find it:
-```
-powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='echo $HOME'"
-```
+**IMPORTANT**: Replace `REMOTE_HOME` with the actual path (e.g., `/home/ben`). Replace `OPENCODE_PASSWORD` with the generated password.
 
 Verify it's running:
 ```
@@ -689,16 +710,16 @@ echo "Tunnel PID: $!"
 powershell -Command "Start-Process -FilePath 'GCLOUD_CMD' -ArgumentList 'compute','start-iap-tunnel','INSTANCE_ID','4096','--local-host-port=localhost:4096','--project=path26-489205','--zone=europe-west1-b' -WindowStyle Hidden"
 ```
 
-Wait and test (on both platforms):
+Wait and test. **The server requires auth, so expect HTTP 401 (not 200).** A 401 response means the tunnel works. Only a connection error means the tunnel is down.
 
 macOS/Linux:
 ```bash
-sleep 10 && curl -sf http://localhost:4096 > /dev/null && echo "TUNNEL_OK" || echo "TUNNEL_FAILED"
+sleep 10 && curl -so /dev/null -w '%{http_code}' http://localhost:4096 | grep -q '401' && echo "TUNNEL_OK" || echo "TUNNEL_FAILED"
 ```
 
 Windows:
 ```
-powershell -Command "Start-Sleep -Seconds 10; try { $null = Invoke-WebRequest -Uri 'http://localhost:4096' -UseBasicParsing -TimeoutSec 5; Write-Output 'TUNNEL_OK' } catch { Write-Output 'TUNNEL_FAILED' }"
+powershell -Command "Start-Sleep -Seconds 10; try { $null = Invoke-WebRequest -Uri 'http://localhost:4096' -UseBasicParsing -TimeoutSec 5 } catch { if ($_.Exception.Response.StatusCode -eq 401) { Write-Output 'TUNNEL_OK' } else { Write-Output 'TUNNEL_FAILED' } }"
 ```
 
 If TUNNEL_FAILED, wait longer and retry. If it keeps failing, go back to Step 8 and verify the OpenCode server is running.
@@ -842,11 +863,98 @@ If the instance has an external IP, also tell them:
 
 ---
 
-## Optional: Install persistent tunnel service
+## Step 13: Create convenience scripts and install tunnel service
 
-Ask the user: "Would you like me to install the tunnel as a system service so it auto-starts on login and reconnects if it drops?"
+Create simple scripts so the user can start/stop their workspace with one command. Also install the tunnel as a system service so it auto-starts on login and reconnects when the instance wakes up.
 
-If yes:
+Tell the user: "I'm setting up some shortcuts so you can easily start and stop your cloud workspace, and the tunnel will reconnect automatically."
+
+### macOS/Linux — create start/stop scripts
+
+```bash
+# Create workspace control script
+cat > ~/opencode-workspace.sh << 'SCRIPT'
+#!/bin/bash
+INSTANCE_ID="INSTANCE_ID_HERE"
+PROJECT_ID="path26-489205"
+ZONE="europe-west1-b"
+
+case "$1" in
+  start)
+    echo "Starting your cloud workspace..."
+    gcloud compute instances start "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --quiet
+    echo "Waiting for it to be ready..."
+    for i in $(seq 1 30); do
+      gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --command='curl -sf http://localhost:8080/health' --quiet 2>/dev/null && break
+      sleep 5
+    done
+    echo "Workspace is ready! Open OpenCode to connect."
+    ;;
+  stop)
+    echo "Stopping your cloud workspace (files are saved)..."
+    gcloud compute instances stop "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --quiet
+    echo "Stopped. Start again with: opencode-workspace start"
+    ;;
+  status)
+    STATUS=$(gcloud compute instances describe "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --format='value(status)' 2>/dev/null)
+    echo "Workspace: $INSTANCE_ID — $STATUS"
+    ;;
+  *)
+    echo "Usage: opencode-workspace [start|stop|status]"
+    ;;
+esac
+SCRIPT
+chmod +x ~/opencode-workspace.sh
+ln -sf ~/opencode-workspace.sh /usr/local/bin/opencode-workspace 2>/dev/null || true
+
+echo "Created ~/opencode-workspace.sh"
+echo "Usage: opencode-workspace start|stop|status"
+```
+
+Replace `INSTANCE_ID_HERE` with the actual instance ID.
+
+### Windows — create start/stop scripts
+
+```
+powershell -Command "
+@'
+param([string]$Action)
+$INSTANCE_ID = 'INSTANCE_ID_HERE'
+$PROJECT_ID = 'path26-489205'
+$ZONE = 'europe-west1-b'
+$GCLOUD = 'GCLOUD_CMD'
+
+switch ($Action) {
+  'start' {
+    Write-Output 'Starting your cloud workspace...'
+    & $GCLOUD compute instances start $INSTANCE_ID --project=$PROJECT_ID --zone=$ZONE --quiet
+    Write-Output 'Waiting for it to be ready...'
+    for ($i=1; $i -le 30; $i++) {
+      try { $r = & $GCLOUD compute ssh $INSTANCE_ID --project=$PROJECT_ID --zone=$ZONE --command='curl -sf http://localhost:8080/health' --quiet 2>$null; if ($r) { break } } catch {}
+      Start-Sleep 5
+    }
+    Write-Output 'Workspace is ready! Open OpenCode to connect.'
+  }
+  'stop' {
+    Write-Output 'Stopping your cloud workspace (files are saved)...'
+    & $GCLOUD compute instances stop $INSTANCE_ID --project=$PROJECT_ID --zone=$ZONE --quiet
+    Write-Output 'Stopped. Start again with: opencode-workspace start'
+  }
+  'status' {
+    $s = & $GCLOUD compute instances describe $INSTANCE_ID --project=$PROJECT_ID --zone=$ZONE --format='value(status)' 2>$null
+    Write-Output \"Workspace: $INSTANCE_ID - $s\"
+  }
+  default { Write-Output 'Usage: opencode-workspace start|stop|status' }
+}
+'@ | Set-Content '$env:USERPROFILE\opencode-workspace.ps1'
+Write-Output 'Created ~/opencode-workspace.ps1'
+Write-Output 'Usage: powershell ~/opencode-workspace.ps1 start|stop|status'
+"
+```
+
+Replace `INSTANCE_ID_HERE` with the actual instance ID and `GCLOUD_CMD` with the gcloud path.
+
+### Install persistent tunnel service (auto-start on login)
 
 ### macOS — launchd agent
 
@@ -939,6 +1047,8 @@ gcloud compute instances stop "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZO
 Windows: `powershell -Command "& 'GCLOUD_CMD' compute instances stop 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --quiet"`
 
 The machine auto-stops after 15 minutes of inactivity. Your files are saved.
+
+Tell the user: "Your workspace will automatically go to sleep after 15 minutes of no activity to save costs. To wake it up, just run `opencode-workspace start` (or the PowerShell equivalent on Windows). The tunnel service will reconnect automatically."
 
 ---
 
