@@ -49,7 +49,7 @@ My Cloud Workspace
 ==================
 Last updated: 2026-03-18 4:30 PM
 
-Name:           freshvibe-abc12345
+Name:           opencode-abc12345
 Project:        my-app
 Owner:          ben@example.com
 Password:       XDJUzZACEHue3OqbnSFNYwl5K8R7ktMT
@@ -291,18 +291,30 @@ export PATH="$HOME/google-cloud-sdk/bin:$PATH"
 
 ## Step 4: Check and install OpenCode CLI
 
+The desktop app bundles the CLI — do NOT install a separate CLI if the desktop app is present (having two versions causes confusion).
+
 ### macOS
 
+Check desktop app first, then PATH:
 ```bash
-which opencode && opencode --version || echo "NOT_FOUND"
+if [ -x "/Applications/OpenCode.app/Contents/MacOS/opencode-cli" ]; then
+  echo "FOUND: /Applications/OpenCode.app/Contents/MacOS/opencode-cli"
+elif command -v opencode &>/dev/null; then
+  echo "FOUND: $(which opencode)"
+else
+  echo "NOT_FOUND"
+fi
 ```
 
-If NOT_FOUND:
+**Save the found path as OPENCODE_CMD.**
+
+If NOT_FOUND (no desktop app AND no CLI):
 ```bash
 curl -fsSL https://opencode.ai/install | bash
 export PATH="$HOME/.opencode/bin:$PATH"
 opencode --version
 ```
+Or tell the user: "Download OpenCode from https://opencode.ai/download"
 
 ### Windows
 
@@ -418,7 +430,7 @@ Sanitize USER_EMAIL and PROJECT_NAME for GCP labels:
 ### macOS/Linux
 
 ```bash
-INSTANCE_ID="freshvibe-$(openssl rand -hex 4)"
+INSTANCE_ID="opencode-$(openssl rand -hex 4)"
 PROJECT_ID="${GCP_PROJECT_ID:-path26-489205}"
 ZONE="${GCP_GCE_ZONE:-europe-west1-b}"
 TEMPLATE="${GCP_GCE_INSTANCE_TEMPLATE:-freshvibe-gce-template}"
@@ -451,7 +463,7 @@ echo "Created: $INSTANCE_ID"
 
 Generate instance ID:
 ```
-powershell -Command "$id = 'freshvibe-' + -join((48..57)+(97..102)|Get-Random -Count 8|%%{[char]$_}); Write-Output $id"
+powershell -Command "$id = 'opencode-' + -join((48..57)+(97..102)|Get-Random -Count 8|%%{[char]$_}); Write-Output $id"
 ```
 **Save this output as INSTANCE_ID.**
 
@@ -1022,7 +1034,7 @@ gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
 
 The R2R deployment uses `PORT_PROXY_DOMAIN=path26.rome2rio.com` to map instance ports to public subdomains. When configured:
 
-- A dev server on port 3000 on instance `freshvibe-abc12345` would be accessible at `https://freshvibe-abc12345.path26.rome2rio.com`
+- A dev server on port 3000 on instance `opencode-abc12345` would be accessible at `https://opencode-abc12345.path26.rome2rio.com`
 - The load balancer URL mask routes `<instance-name>.path26.rome2rio.com` → the instance's port 3000
 
 **Note**: This requires the LB URL mask and serverless NEG to be configured. If the port proxy isn't set up yet, services on the instance are only accessible via IAP tunnel or direct SSH.
