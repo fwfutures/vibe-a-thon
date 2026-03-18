@@ -622,6 +622,80 @@ If the instance has an external IP, also tell them:
 
 ---
 
+## Optional: Install persistent tunnel service
+
+Ask the user: "Would you like me to install the tunnel as a system service so it auto-starts on login and reconnects if it drops?"
+
+If yes:
+
+### macOS — launchd agent
+
+```bash
+INSTANCE_ID="INSTANCE_ID"  # replace with actual
+PROJECT_ID="${GCP_PROJECT_ID:-path26-489205}"
+ZONE="${GCP_GCE_ZONE:-europe-west1-b}"
+GCLOUD_PATH="$(which gcloud)"
+
+cat > ~/Library/LaunchAgents/com.freshvibe.opencode-tunnel.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.freshvibe.opencode-tunnel</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${GCLOUD_PATH}</string>
+        <string>compute</string>
+        <string>ssh</string>
+        <string>${INSTANCE_ID}</string>
+        <string>--project=${PROJECT_ID}</string>
+        <string>--zone=${ZONE}</string>
+        <string>--</string>
+        <string>-L</string>
+        <string>4096:localhost:4096</string>
+        <string>-N</string>
+        <string>-o</string>
+        <string>ServerAliveInterval=60</string>
+    </array>
+    <key>KeepAlive</key><true/>
+    <key>RunAtLoad</key><true/>
+    <key>ThrottleInterval</key><integer>10</integer>
+    <key>StandardOutPath</key><string>/tmp/opencode-tunnel.log</string>
+    <key>StandardErrorPath</key><string>/tmp/opencode-tunnel.log</string>
+</dict>
+</plist>
+EOF
+
+launchctl load ~/Library/LaunchAgents/com.freshvibe.opencode-tunnel.plist
+echo "Tunnel service installed — starts on login, auto-restarts if it drops"
+```
+
+To stop and remove:
+```bash
+launchctl unload ~/Library/LaunchAgents/com.freshvibe.opencode-tunnel.plist
+rm ~/Library/LaunchAgents/com.freshvibe.opencode-tunnel.plist
+```
+
+### Windows — Scheduled Task
+
+```
+powershell -Command "
+  $action = New-ScheduledTaskAction -Execute 'GCLOUD_CMD' -Argument 'compute start-iap-tunnel INSTANCE_ID 4096 --local-host-port=localhost:4096 --project=path26-489205 --zone=europe-west1-b'
+  $trigger = New-ScheduledTaskTrigger -AtLogOn
+  $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+  Register-ScheduledTask -TaskName 'OpenCode Cloud Tunnel' -Action $action -Trigger $trigger -Settings $settings -Description 'IAP tunnel to GCE workspace for OpenCode'
+  Start-ScheduledTask -TaskName 'OpenCode Cloud Tunnel'
+  Write-Output 'Tunnel service installed — starts on login, auto-restarts if it drops'
+"
+```
+
+To stop and remove:
+```
+powershell -Command "Stop-ScheduledTask -TaskName 'OpenCode Cloud Tunnel'; Unregister-ScheduledTask -TaskName 'OpenCode Cloud Tunnel' -Confirm:$false"
+```
+
+---
+
 ## List workspaces
 
 ### macOS/Linux
@@ -645,6 +719,24 @@ gcloud compute instances stop "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZO
 Windows: `powershell -Command "& 'GCLOUD_CMD' compute instances stop 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --quiet"`
 
 The machine auto-stops after 15 minutes of inactivity. Your files are saved.
+
+---
+
+## Remove tunnel service (if installed)
+
+Only run this if the user asks to remove the persistent tunnel service.
+
+**macOS:**
+```bash
+launchctl unload ~/Library/LaunchAgents/com.freshvibe.opencode-tunnel.plist 2>/dev/null
+rm -f ~/Library/LaunchAgents/com.freshvibe.opencode-tunnel.plist
+echo "Tunnel service removed"
+```
+
+**Windows:**
+```
+powershell -Command "Stop-ScheduledTask -TaskName 'OpenCode Cloud Tunnel' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName 'OpenCode Cloud Tunnel' -Confirm:$false -ErrorAction SilentlyContinue; Write-Output 'Tunnel service removed'"
+```
 
 ---
 
