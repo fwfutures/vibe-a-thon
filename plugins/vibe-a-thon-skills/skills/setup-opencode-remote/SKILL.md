@@ -452,22 +452,33 @@ powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-4
 
 ## Step 10: Create tunnel and connect via OpenCode desktop app
 
-### 10a: Start the tunnel
+### 10a: Start the tunnel (MUST survive OpenCode restart)
 
-**macOS/Linux:**
+The tunnel must run as a fully detached process, because we'll restart OpenCode in step 10c. If the tunnel is a child of the current shell/agent, it dies when OpenCode restarts.
+
+**macOS/Linux — use `nohup` to detach:**
 ```bash
-gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
-  -- -L 4096:localhost:4096 -N -f
+nohup gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
+  -- -L 4096:localhost:4096 -N -o ServerAliveInterval=60 \
+  > /tmp/opencode-tunnel.log 2>&1 &
+echo "Tunnel PID: $!"
 ```
 
-**Windows — use IAP tunnel (PuTTY cannot do SSH port forwarding):**
+**Windows — `Start-Process` is already detached from the calling shell:**
 ```
-powershell -Command "Start-Process -NoNewWindow -FilePath 'GCLOUD_CMD' -ArgumentList 'compute','start-iap-tunnel','INSTANCE_ID','4096','--local-host-port=localhost:4096','--project=path26-489205','--zone=europe-west1-b'"
+powershell -Command "Start-Process -FilePath 'GCLOUD_CMD' -ArgumentList 'compute','start-iap-tunnel','INSTANCE_ID','4096','--local-host-port=localhost:4096','--project=path26-489205','--zone=europe-west1-b' -WindowStyle Hidden"
 ```
 
-Wait and test:
+Wait and test (on both platforms):
+
+macOS/Linux:
+```bash
+sleep 10 && curl -sf http://localhost:4096 > /dev/null && echo "TUNNEL_OK" || echo "TUNNEL_FAILED"
 ```
-powershell -Command "Start-Sleep -Seconds 10; try { $r = Invoke-WebRequest -Uri 'http://localhost:4096' -UseBasicParsing -TimeoutSec 5; Write-Output 'TUNNEL_OK' } catch { Write-Output 'TUNNEL_FAILED' }"
+
+Windows:
+```
+powershell -Command "Start-Sleep -Seconds 10; try { $null = Invoke-WebRequest -Uri 'http://localhost:4096' -UseBasicParsing -TimeoutSec 5; Write-Output 'TUNNEL_OK' } catch { Write-Output 'TUNNEL_FAILED' }"
 ```
 
 If TUNNEL_FAILED, wait longer and retry. If it keeps failing, go back to Step 8 and verify the OpenCode server is running.
