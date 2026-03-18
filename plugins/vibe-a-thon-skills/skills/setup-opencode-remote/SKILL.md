@@ -35,6 +35,133 @@ When running commands on the remote Linux machine via `gcloud compute ssh --comm
 4. **Keep commands simple** — run multiple separate SSH invocations rather than one complex compound command.
 5. **The tmux command string** must be a single simple command with no special characters. Pass env vars as part of the tmux command directly (no `export`).
 
+## IMPORTANT: Track workspace state in devserver.txt
+
+After every significant step (instance created, server started, tunnel connected, repo cloned, etc.), write/update a `devserver.txt` file in the **current working directory**. This file is the single source of truth for reconnecting later.
+
+**Write this file after Step 6 (instance created) and update it after every subsequent step.**
+
+The file uses a simple, readable format. Non-technical users may open this to find their password or check status.
+
+Example:
+```
+My Cloud Workspace
+==================
+Last updated: 2026-03-18 4:30 PM
+
+Name:           freshvibe-abc12345
+Project:        my-app
+Owner:          ben@example.com
+Password:       XDJUzZACEHue3OqbnSFNYwl5K8R7ktMT
+
+Local Machine
+-------------
+Tunnel:         Running (IAP on port 4096)
+OpenCode URL:   http://localhost:4096
+Auto-reconnect: Installed (starts on login)
+gcloud path:    C:\Users\ben\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd
+OpenCode path:  C:\Users\ben\AppData\Local\OpenCode\opencode-cli.exe
+
+Remote Machine
+--------------
+Instance:       Running
+OpenCode server: Running (tmux session: oc)
+Starter repo:   ~/fv-rome2rio-starter (cloned)
+Home directory: /home/ben
+GH_TOKEN:       Available (baked into template)
+
+Cloud Details
+-------------
+GCP Project:    path26-489205
+Zone:           europe-west1-b
+External IP:    None (private instance)
+```
+
+**macOS/Linux — write/update:**
+```bash
+cat > devserver.txt << EOF
+My Cloud Workspace
+==================
+Last updated: $(date '+%Y-%m-%d %I:%M %p')
+
+Name:           $INSTANCE_ID
+Project:        PROJECT_NAME
+Owner:          USER_EMAIL
+Password:       $OPENCODE_PASSWORD
+
+Local Machine
+-------------
+Tunnel:         Running (SSH on port 4096)
+OpenCode URL:   http://localhost:4096
+Auto-reconnect: Not installed
+
+Remote Machine
+--------------
+Instance:       Running
+OpenCode server: Running (tmux session: oc)
+Starter repo:   Not cloned yet
+Home directory: unknown
+GH_TOKEN:       Available (baked into template)
+
+Cloud Details
+-------------
+GCP Project:    $PROJECT_ID
+Zone:           $ZONE
+External IP:    ${EXTERNAL_IP:-None (private instance)}
+EOF
+```
+
+**Windows:**
+```
+powershell -Command "
+@'
+My Cloud Workspace
+==================
+Last updated: $(Get-Date -Format 'yyyy-MM-dd h:mm tt')
+
+Name:           INSTANCE_ID
+Project:        PROJECT_NAME
+Owner:          USER_EMAIL
+Password:       OPENCODE_PASSWORD
+
+Local Machine
+-------------
+Tunnel:         Running (IAP on port 4096)
+OpenCode URL:   http://localhost:4096
+Auto-reconnect: Not installed
+gcloud path:    GCLOUD_CMD
+OpenCode path:  OPENCODE_CMD
+
+Remote Machine
+--------------
+Instance:       Running
+OpenCode server: Running (tmux session: oc)
+Starter repo:   Not cloned yet
+Home directory: unknown
+GH_TOKEN:       Available (baked into template)
+
+Cloud Details
+-------------
+GCP Project:    path26-489205
+Zone:           europe-west1-b
+External IP:    None (private instance)
+'@ | Set-Content devserver.txt
+"
+```
+
+**Update the file whenever something changes:**
+- After cloning starter repo → change "Starter repo: ~/fv-rome2rio-starter (cloned)"
+- After finding remote home dir → update "Home directory: /home/ben"
+- After installing persistent tunnel → change "Auto-reconnect: Installed (starts on login)"
+- After stopping workspace → change "Instance: Stopped"
+- After tunnel drops → change "Tunnel: Not running"
+- After killing opencode server → change "OpenCode server: Stopped"
+- Always update the "Last updated" line
+
+**If devserver.txt already exists**, read it first to recover saved values (instance name, password, tool paths, etc.) so reconnection works without asking the user again.
+
+---
+
 ## CRITICAL: SSH on Windows uses PuTTY (plink.exe)
 
 The Google Cloud SDK on Windows ships with PuTTY (`plink.exe`), NOT OpenSSH. This means:
