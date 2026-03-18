@@ -398,7 +398,30 @@ If this returns exit code 0 → server is running. If it shows "no server runnin
 
 ---
 
-## Step 9: Create tunnel and connect
+## Step 9: Clone the starter repo
+
+After OpenCode server is running, clone the starter repo on the remote machine so there's a project to work with.
+
+### macOS/Linux
+
+```bash
+gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
+  --command='cd ~ ; git clone https://github.com/fwfutures/fv-rome2rio-starter.git 2>/dev/null || echo "Already cloned"'
+```
+
+### Windows
+
+```
+powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='cd ~ ; git clone https://github.com/fwfutures/fv-rome2rio-starter.git'"
+```
+
+If the repo is private and cloning fails with "Authentication failed", the GH_TOKEN env var needs to be set on the instance. See "Baking GH_TOKEN into the instance template" below.
+
+For private repos with GH_TOKEN already baked into the template, git will auto-authenticate via the credential helper.
+
+---
+
+## Step 10: Create tunnel and connect
 
 ### macOS/Linux
 
@@ -501,6 +524,52 @@ gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE"
 **tmux "no server running" error**: This means no tmux session exists. It's normal when first connecting or after `tmux kill-session`. Just start a new session.
 
 **"External IP not found; defaulting to IAP tunneling"**: This is normal — the instance may not have a public IP. IAP tunneling works fine. Do NOT try to fix this.
+
+---
+
+## Baking GH_TOKEN into the instance template
+
+To let GCE instances clone private GitHub repos, add `GH_TOKEN` as an agent env var in the instance template. This only needs to be done once — all new instances created from the template will have it.
+
+**Prerequisite**: You need `gcloud auth login` as a user with `compute.instanceTemplates.create` permission on the project.
+
+```bash
+./scripts/gcp-gce-setup.sh \
+  --project-id=path26-489205 --zone=europe-west1-b \
+  --instance-template=freshvibe-gce-template \
+  --no-external-ip \
+  --daemon-source-ranges=10.0.0.0/8 \
+  --agent-env="CLAUDE_CODE_USE_VERTEX=1" \
+  --agent-env="CLOUD_ML_REGION=global" \
+  --agent-env="ANTHROPIC_VERTEX_PROJECT_ID=path26-489205" \
+  --agent-env="GOOGLE_CLOUD_PROJECT=path26-489205" \
+  --agent-env="ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6" \
+  --agent-env="ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6" \
+  --agent-env="ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5@20251001" \
+  --agent-env="GH_TOKEN=YOUR_GITHUB_PAT_HERE" \
+  --skip-managed-image-build --skip-web-bootstrap --skip-firewall --set-defaults
+```
+
+The startup script writes agent env vars to `/etc/profile.d/freshvibe-runtime.sh`, so `GH_TOKEN` is available in all login shells. Git credential helpers and the `gh` CLI will pick it up automatically.
+
+**Important**: Changing agent env vars requires recreating the template (templates are immutable). Existing running instances keep the old vars until recycled.
+
+If GH_TOKEN is NOT in the template, you can set it ad-hoc on a running instance:
+```bash
+gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
+  --command='echo "export GH_TOKEN=YOUR_TOKEN" >> ~/.bashrc'
+```
+
+---
+
+## Port proxy domain
+
+The R2R deployment uses `PORT_PROXY_DOMAIN=path26.rome2rio.com` to map instance ports to public subdomains. When configured:
+
+- A dev server on port 3000 on instance `freshvibe-abc12345` would be accessible at `https://freshvibe-abc12345.path26.rome2rio.com`
+- The load balancer URL mask routes `<instance-name>.path26.rome2rio.com` → the instance's port 3000
+
+**Note**: This requires the LB URL mask and serverless NEG to be configured. If the port proxy isn't set up yet, services on the instance are only accessible via IAP tunnel or direct SSH.
 
 ---
 
