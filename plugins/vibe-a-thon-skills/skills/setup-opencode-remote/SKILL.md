@@ -450,44 +450,160 @@ powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-4
 
 ---
 
-## Step 10: Create tunnel and connect
+## Step 10: Create tunnel and connect via OpenCode desktop app
 
-### macOS/Linux
+### 10a: Start the tunnel
 
+**macOS/Linux:**
 ```bash
 gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
   -- -L 4096:localhost:4096 -N -f
-
-opencode attach http://localhost:4096 --password "$OPENCODE_PASSWORD"
 ```
 
-### Windows — use IAP tunnel (PuTTY cannot do SSH port forwarding)
-
-Start IAP tunnel in background:
+**Windows — use IAP tunnel (PuTTY cannot do SSH port forwarding):**
 ```
 powershell -Command "Start-Process -NoNewWindow -FilePath 'GCLOUD_CMD' -ArgumentList 'compute','start-iap-tunnel','INSTANCE_ID','4096','--local-host-port=localhost:4096','--project=path26-489205','--zone=europe-west1-b'"
 ```
 
-Wait for tunnel:
+Wait and test:
 ```
-powershell -Command "Start-Sleep -Seconds 5"
-```
-
-Test tunnel:
-```
-powershell -Command "try { $r = Invoke-WebRequest -Uri 'http://localhost:4096' -UseBasicParsing -TimeoutSec 5; Write-Output 'TUNNEL_OK' } catch { Write-Output 'TUNNEL_FAILED' }"
+powershell -Command "Start-Sleep -Seconds 10; try { $r = Invoke-WebRequest -Uri 'http://localhost:4096' -UseBasicParsing -TimeoutSec 5; Write-Output 'TUNNEL_OK' } catch { Write-Output 'TUNNEL_FAILED' }"
 ```
 
-If TUNNEL_FAILED, wait 5 more seconds and retry. If it keeps failing, the OpenCode server may not have started — go back to Step 8.
+If TUNNEL_FAILED, wait longer and retry. If it keeps failing, go back to Step 8 and verify the OpenCode server is running.
 
-Connect:
+### 10b: Add server to OpenCode desktop app (so user just clicks to connect)
+
+The OpenCode desktop app stores its server list in a JSON file. We can inject the remote server with password pre-filled so the user just opens the app and clicks on it.
+
+**macOS:**
+```bash
+python3 -c "
+import json, os, sys
+
+store_path = os.path.expanduser('~/Library/Application Support/ai.opencode.desktop/opencode.global.dat')
+
+# Read existing store
+try:
+    with open(store_path) as f:
+        store = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    store = {}
+
+# Parse server data
+try:
+    server_data = json.loads(store.get('server', '{}'))
+except json.JSONDecodeError:
+    server_data = {}
+
+if 'list' not in server_data:
+    server_data['list'] = []
+
+# Remove any existing entry for localhost:4096
+server_data['list'] = [s for s in server_data['list'] if s.get('http', {}).get('url') != 'http://localhost:4096']
+
+# Add new entry
+server_data['list'].append({
+    'type': 'http',
+    'http': {
+        'url': 'http://localhost:4096',
+        'username': 'opencode',
+        'password': '$OPENCODE_PASSWORD'
+    },
+    'displayName': 'Cloud: $INSTANCE_ID'
+})
+
+store['server'] = json.dumps(server_data)
+
+with open(store_path, 'w') as f:
+    json.dump(store, f)
+
+print('Server added to OpenCode desktop app')
+"
+```
+
+Also set it as the default server:
+```bash
+python3 -c "
+import json, os
+store_path = os.path.expanduser('~/Library/Application Support/ai.opencode.desktop/opencode.settings.dat')
+try:
+    with open(store_path) as f:
+        settings = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    settings = {}
+settings['defaultServerUrl'] = 'http://localhost:4096'
+with open(store_path, 'w') as f:
+    json.dump(settings, f)
+print('Default server set to http://localhost:4096')
+"
+```
+
+**Windows:**
+```
+powershell -Command "
+  $storePath = \"$env:APPDATA\ai.opencode.desktop\opencode.global.dat\"
+  if (Test-Path $storePath) {
+    $store = Get-Content $storePath | ConvertFrom-Json
+  } else {
+    $store = @{}
+  }
+  $serverJson = if ($store.server) { $store.server } else { '{}' }
+  $serverData = $serverJson | ConvertFrom-Json
+  if (-not $serverData.list) { $serverData | Add-Member -NotePropertyName 'list' -NotePropertyValue @() }
+  $serverData.list = @($serverData.list | Where-Object { $_.http.url -ne 'http://localhost:4096' })
+  $newServer = @{ type='http'; http=@{ url='http://localhost:4096'; username='opencode'; password='OPENCODE_PASSWORD' }; displayName='Cloud: INSTANCE_ID' }
+  $serverData.list += $newServer
+  $store.server = ($serverData | ConvertTo-Json -Depth 10 -Compress)
+  $store | ConvertTo-Json -Depth 10 | Set-Content $storePath
+  Write-Output 'Server added to OpenCode desktop app'
+"
+```
+
+Set as default:
+```
+powershell -Command "
+  $settingsPath = \"$env:APPDATA\ai.opencode.desktop\opencode.settings.dat\"
+  if (Test-Path $settingsPath) { $s = Get-Content $settingsPath | ConvertFrom-Json } else { $s = @{} }
+  $s | Add-Member -NotePropertyName 'defaultServerUrl' -NotePropertyValue 'http://localhost:4096' -Force
+  $s | ConvertTo-Json | Set-Content $settingsPath
+  Write-Output 'Default server set'
+"
+```
+
+### 10c: Open the desktop app
+
+**macOS:**
+```bash
+open -a OpenCode
+```
+
+**Windows:**
+```
+powershell -Command "Start-Process 'OPENCODE_CMD'"
+```
+
+Or if the desktop app is at the default location:
+```
+powershell -Command "Start-Process '$env:LOCALAPPDATA\OpenCode\OpenCode.exe'"
+```
+
+**IMPORTANT**: The app must be restarted (or started fresh) after writing the store file. If it was already running, it will overwrite the changes on its next save. Tell the user to **quit and reopen** the app if it was already open.
+
+### 10d: Alternative — CLI attach (if desktop app isn't available)
+
+```bash
+opencode attach http://localhost:4096 --password "$OPENCODE_PASSWORD"
+```
+
+Windows:
 ```
 powershell -Command "& 'OPENCODE_CMD' attach http://localhost:4096 --password 'OPENCODE_PASSWORD'"
 ```
 
 ### After connecting, tell the user:
 
-> "You're connected! OpenCode is now running on your cloud computer."
+> "You're connected! OpenCode is now running on your cloud computer. The server 'Cloud: INSTANCE_ID' has been added to your OpenCode desktop app — just open the app and it will connect automatically."
 
 If the instance has an external IP, also tell them:
 
