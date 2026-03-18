@@ -741,19 +741,41 @@ If TUNNEL_FAILED, wait longer and retry. If it keeps failing, go back to Step 8 
 
 ### 10b: Connect OpenCode desktop app to the cloud workspace
 
-The desktop app must be **quit first**, then we write the server config, then relaunch. The app loads `.dat` files on startup — if it's running, it will overwrite our changes from its in-memory state.
+**The agent is likely running INSIDE the OpenCode desktop app.** We cannot quit the app directly — that would kill us. Instead, we write a self-contained reconfig script, launch it as a detached process, then tell the user what's about to happen. The script will:
+1. Wait 3 seconds (for the agent message to be visible)
+2. Quit OpenCode
+3. Write the server config (while the app is closed so it doesn't get overwritten)
+4. Relaunch OpenCode with the cloud server pre-configured
 
 **macOS:**
+
+Write the reconfig script. **Replace OPENCODE_PASSWORD and INSTANCE_ID with actual values before running.**
+
 ```bash
-# 1. Quit the app if running
+cat > /tmp/opencode-reconfig.sh << 'RECONFIG'
+#!/bin/bash
+OPENCODE_PASSWORD="REPLACE_PASSWORD"
+INSTANCE_ID="REPLACE_INSTANCE_ID"
+PYTHON3="REPLACE_PYTHON3_PATH"
+SETTINGS_DAT="$HOME/Library/Application Support/ai.opencode.desktop/opencode.settings.dat"
+GLOBAL_DAT="$HOME/Library/Application Support/ai.opencode.desktop/opencode.global.dat"
+
+# Wait for the user to see the agent's message
+sleep 3
+
+# Quit OpenCode gracefully
 osascript -e 'quit app "OpenCode"' 2>/dev/null
-sleep 2
+sleep 3
 
-# 2. Set default server URL (read by Rust backend on startup, not overwritten by frontend)
-echo '{"defaultServerUrl":"http://localhost:4096"}' > ~/Library/Application\ Support/ai.opencode.desktop/opencode.settings.dat
+# Force kill if still running
+pkill -f "OpenCode" 2>/dev/null
+sleep 1
 
-# 3. Add server with credentials to the server list
-python3 -c "
+# Write default server URL
+echo '{"defaultServerUrl":"http://localhost:4096"}' > "$SETTINGS_DAT"
+
+# Add server with credentials to the server list
+"$PYTHON3" -c "
 import json, os
 path = os.path.expanduser('~/Library/Application Support/ai.opencode.desktop/opencode.global.dat')
 try:
@@ -773,49 +795,68 @@ server['list'].append({
 data['server'] = json.dumps(server)
 with open(path, 'w') as f:
     json.dump(data, f)
-print('Server added to OpenCode desktop app')
+print('Server config written')
 "
 
-# 4. Relaunch
+# Relaunch
 open -a OpenCode
-echo "OpenCode desktop app launched with cloud workspace configured"
+echo "OpenCode relaunched with cloud workspace configured"
+RECONFIG
+chmod +x /tmp/opencode-reconfig.sh
 ```
 
-**NOTE**: If `python3` was installed via uv, use the full path: `~/.local/share/uv/python/cpython-3.12.*/bin/python3` or `uv run python3 -c '...'`
+**IMPORTANT**: After writing the script, replace the placeholder values:
+```bash
+sed -i '' "s|REPLACE_PASSWORD|$OPENCODE_PASSWORD|" /tmp/opencode-reconfig.sh
+sed -i '' "s|REPLACE_INSTANCE_ID|$INSTANCE_ID|" /tmp/opencode-reconfig.sh
+sed -i '' "s|REPLACE_PYTHON3_PATH|$(which python3 2>/dev/null || echo python3)|" /tmp/opencode-reconfig.sh
+```
+
+Now launch the script as a **fully detached process** (survives parent dying):
+```bash
+nohup /tmp/opencode-reconfig.sh > /tmp/opencode-reconfig.log 2>&1 &
+disown
+echo "Reconfig script launched (PID: $!). OpenCode will close and reopen in a few seconds."
+```
+
+Tell the user **immediately before launching**:
+> "I'm about to restart OpenCode to connect it to your cloud workspace. The app will close and reopen in a few seconds with the cloud server pre-configured. Don't worry — this is expected!"
 
 **Windows:**
+
+Write the reconfig script:
 ```
 powershell -Command "
-  # 1. Quit the app if running
-  Get-Process OpenCode -ErrorAction SilentlyContinue | Stop-Process -Force
-  Start-Sleep 2
-
-  # 2. Set default server URL
-  '{""defaultServerUrl"":""http://localhost:4096""}' | Set-Content '$env:APPDATA\ai.opencode.desktop\opencode.settings.dat'
-
-  # 3. Add server with credentials
-  $globalPath = '$env:APPDATA\ai.opencode.desktop\opencode.global.dat'
-  if (Test-Path $globalPath) { $data = Get-Content $globalPath | ConvertFrom-Json } else { $data = @{} }
-  $serverJson = if ($data.server) { $data.server } else { '{}' }
-  $serverData = $serverJson | ConvertFrom-Json
-  if (-not $serverData.list) { $serverData | Add-Member -NotePropertyName 'list' -NotePropertyValue @() -Force }
-  $serverData.list = @($serverData.list | Where-Object { $_.http.url -ne 'http://localhost:4096' })
-  $newServer = @{ type='http'; http=@{ url='http://localhost:4096'; username='opencode'; password='OPENCODE_PASSWORD' }; displayName='Cloud: INSTANCE_ID' }
-  $serverData.list += $newServer
-  $data.server = ($serverData | ConvertTo-Json -Depth 10 -Compress)
-  $data | ConvertTo-Json -Depth 10 | Set-Content $globalPath
-
-  # 4. Relaunch
-  Start-Process '$env:LOCALAPPDATA\OpenCode\OpenCode.exe'
-  Write-Output 'OpenCode desktop app launched with cloud workspace configured'
+@'
+Start-Sleep 3
+Get-Process OpenCode -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep 3
+'{""defaultServerUrl"":""http://localhost:4096""}' | Set-Content ""$env:APPDATA\ai.opencode.desktop\opencode.settings.dat""
+$globalPath = ""$env:APPDATA\ai.opencode.desktop\opencode.global.dat""
+if (Test-Path $globalPath) { $data = Get-Content $globalPath | ConvertFrom-Json } else { $data = @{} }
+$serverJson = if ($data.server) { $data.server } else { '{}' }
+$serverData = $serverJson | ConvertFrom-Json
+if (-not $serverData.list) { $serverData | Add-Member -NotePropertyName 'list' -NotePropertyValue @() -Force }
+$serverData.list = @($serverData.list | Where-Object { $_.http.url -ne 'http://localhost:4096' })
+$newServer = @{ type='http'; http=@{ url='http://localhost:4096'; username='opencode'; password='OPENCODE_PASSWORD' }; displayName='Cloud: INSTANCE_ID' }
+$serverData.list += $newServer
+$data.server = ($serverData | ConvertTo-Json -Depth 10 -Compress)
+$data | ConvertTo-Json -Depth 10 | Set-Content $globalPath
+Start-Process ""$env:LOCALAPPDATA\OpenCode\OpenCode.exe""
+'@ | Set-Content ""$env:TEMP\opencode-reconfig.ps1""
 "
 ```
 
-**IMPORTANT**: Replace `OPENCODE_PASSWORD` and `INSTANCE_ID` with the actual values.
+Launch it detached:
+```
+powershell -Command "Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','$env:TEMP\opencode-reconfig.ps1' -WindowStyle Hidden"
+```
 
-### After connecting, tell the user:
+**IMPORTANT**: Replace `OPENCODE_PASSWORD` and `INSTANCE_ID` in the script content with actual values before writing.
 
-> "OpenCode is now open and connected to your cloud workspace. You should see 'Cloud: INSTANCE_ID' in the server list."
+### After the reconfig script runs, tell the user:
+
+> "OpenCode will close and reopen in a few seconds with your cloud workspace pre-configured. You should see 'Cloud: INSTANCE_ID' in the server list."
 >
 > "Password for reconnecting: OPENCODE_PASSWORD (also saved in devserver.txt)"
 
