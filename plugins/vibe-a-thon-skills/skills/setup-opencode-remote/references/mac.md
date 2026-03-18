@@ -138,9 +138,9 @@ gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
 # Find remote home
 REMOTE_HOME=$(gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --command='echo $HOME' --quiet 2>/dev/null | tr -d '\r\n')
 
-# Start in tmux — bash -c handles env var correctly
+# Start in tmux — bash -lc (login shell) so /etc/profile.d/ env vars (GH_TOKEN, Vertex AI etc.) are loaded
 gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
-  --command="tmux new-session -d -s oc 'bash -c \"OPENCODE_SERVER_PASSWORD=$OPENCODE_PASSWORD ${REMOTE_HOME}/.opencode/bin/opencode serve --port 4096 --hostname 0.0.0.0\"'"
+  --command="tmux new-session -d -s oc 'bash -lc \"OPENCODE_SERVER_PASSWORD=$OPENCODE_PASSWORD ${REMOTE_HOME}/.opencode/bin/opencode serve --port 4096 --hostname 0.0.0.0\"'"
 ```
 
 ## Step 10: Clone starter repo

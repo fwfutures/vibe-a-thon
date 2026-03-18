@@ -156,9 +156,9 @@ powershell -ExecutionPolicy Bypass -Command "& 'GCLOUD_CMD' compute ssh 'INSTANC
 ```
 **Save as REMOTE_HOME** (e.g., `/home/ben`).
 
-Start server (bash -c for env var):
+Start server (bash -lc = login shell so GH_TOKEN, Vertex AI env vars from /etc/profile.d/ are loaded):
 ```
-powershell -ExecutionPolicy Bypass -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='tmux new-session -d -s oc ""bash -c \""OPENCODE_SERVER_PASSWORD=OPENCODE_PASSWORD REMOTE_HOME/.opencode/bin/opencode serve --port 4096 --hostname 0.0.0.0\""""'"
+powershell -ExecutionPolicy Bypass -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='tmux new-session -d -s oc ""bash -lc \""OPENCODE_SERVER_PASSWORD=OPENCODE_PASSWORD REMOTE_HOME/.opencode/bin/opencode serve --port 4096 --hostname 0.0.0.0\""""'"
 ```
 Replace `REMOTE_HOME` and `OPENCODE_PASSWORD` with actual values.
 
