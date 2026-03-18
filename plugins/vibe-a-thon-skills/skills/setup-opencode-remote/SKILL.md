@@ -25,11 +25,26 @@ powershell -ExecutionPolicy Bypass -Command "YOUR_COMMAND_HERE"
 
 On macOS/Linux, run bash commands directly.
 
+## CRITICAL: Remote commands via gcloud SSH
+
+When running commands on the remote Linux machine via `gcloud compute ssh --command=`, follow these rules:
+
+1. **Use single quotes** around the `--command=` value: `--command='your command here'`
+2. **NEVER use `&&`** — it will be parsed by PowerShell or cmd on Windows before reaching the remote. Use `;` instead.
+3. **NEVER use `2>/dev/null` or `|| true`** — these bash-isms break when passed through Windows shells.
+4. **Keep commands simple** — run multiple separate SSH invocations rather than one complex compound command.
+5. **The tmux command string** must be a single simple command with no special characters. Pass env vars as part of the tmux command directly (no `export`).
+
+## CRITICAL: SSH on Windows uses PuTTY (plink.exe)
+
+The Google Cloud SDK on Windows ships with PuTTY (`plink.exe`), NOT OpenSSH. This means:
+- `gcloud compute ssh -- -L 4096:localhost:4096 -N -f` **WILL FAIL** with "unknown option" popup
+- You MUST use `gcloud compute start-iap-tunnel` for port forwarding on Windows
+- Instances may not have external IPs — gcloud auto-falls back to IAP tunneling, which is fine
+
 ---
 
 ## Step 1: Detect OS
-
-Run this exact command:
 
 **macOS/Linux:**
 ```bash
@@ -44,7 +59,35 @@ powershell -Command "Write-Output Windows"
 
 ---
 
-## Step 2: Check and install gcloud CLI
+## Step 2: Collect user info
+
+Ask the user for two things:
+1. **Their email address** — used to tag the cloud computer so they can find it later
+2. **A project name** — a short name for what they're working on (e.g., "my-app", "website-redesign")
+
+Before asking, try to detect the email automatically:
+
+**macOS/Linux:**
+```bash
+git config --global user.email 2>/dev/null || gcloud config get-value account 2>/dev/null || echo "NOT_FOUND"
+```
+
+**Windows:**
+```
+powershell -Command "git config --global user.email 2>$null; if (-not $?) { & 'GCLOUD_CMD' config get-value account 2>$null }"
+```
+
+If an email is found, confirm it with the user: "I found your email as user@example.com — is that right, or would you like to use a different one?"
+
+If NOT_FOUND, ask: "What email address should I tag this workspace with? This helps identify your cloud computers later."
+
+Then ask: "What's a short name for your project? (e.g., 'my-app', 'website')"
+
+**Save these as USER_EMAIL and PROJECT_NAME.** Sanitize the project name for use as a GCP label (lowercase, alphanumeric and hyphens only, max 63 chars).
+
+---
+
+## Step 3: Check and install gcloud CLI
 
 ### macOS
 
@@ -59,7 +102,7 @@ brew install --cask google-cloud-sdk || echo "Install Homebrew first: /bin/bash 
 
 ### Windows
 
-Check these locations in order. The first one found is your gcloud path. **Save it as GCLOUD_CMD for all later commands.**
+Check these locations in order. **Save the first found path as GCLOUD_CMD** — you'll use it in ALL subsequent gcloud commands.
 
 ```
 powershell -Command "
@@ -81,8 +124,7 @@ If NOT_FOUND, install:
 ```
 powershell -Command "winget install --id Google.CloudSDK -e --accept-package-agreements --accept-source-agreements"
 ```
-
-After install, re-run the check above to find the installed path. **Remember the full path to gcloud.cmd** — you'll use it in all subsequent gcloud commands.
+Then re-run the check above to find the installed path.
 
 ### Linux
 
@@ -98,7 +140,7 @@ export PATH="$HOME/google-cloud-sdk/bin:$PATH"
 
 ---
 
-## Step 3: Check and install OpenCode CLI
+## Step 4: Check and install OpenCode CLI
 
 ### macOS
 
@@ -115,7 +157,7 @@ opencode --version
 
 ### Windows
 
-Check these locations in order:
+Check these locations. **Save the found path as OPENCODE_CMD.**
 
 ```
 powershell -Command "
@@ -135,9 +177,7 @@ powershell -Command "
 "
 ```
 
-If NOT_FOUND, tell the user: "Please download OpenCode from https://opencode.ai/download and install it, then we'll continue." Do NOT try to run `irm https://opencode.ai/install.ps1 | iex` — this URL does not exist.
-
-**Save the found path as OPENCODE_CMD for later.**
+If NOT_FOUND, tell the user: "Please download OpenCode from https://opencode.ai/download and install it, then we'll continue." Do NOT try `irm https://opencode.ai/install.ps1 | iex` — that URL does not exist.
 
 ### Linux
 
@@ -153,51 +193,48 @@ export PATH="$HOME/.opencode/bin:$PATH"
 
 ---
 
-## Step 4: Sign in to Google Cloud
+## Step 5: Sign in to Google Cloud
 
-### CRITICAL: `gcloud auth login` is interactive and blocks for minutes
+### macOS/Linux
 
-**macOS/Linux** — run directly (terminal stays open for the callback):
 ```bash
 gcloud auth login --project=path26-489205
 ```
 
-**Windows** — NEVER run `gcloud auth login` as a synchronous command. It will time out. Instead:
+### Windows — NEVER run gcloud auth login synchronously (it will time out)
 
-1. Launch gcloud auth in a **separate visible window**:
+1. Launch in a **separate visible window**:
 ```
 powershell -Command "Start-Process 'GCLOUD_CMD' -ArgumentList 'auth','login','--project=path26-489205'"
 ```
-(Replace `GCLOUD_CMD` with the full path found in Step 2, e.g. `C:\Users\ben\AppData\Local\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd`)
 
-2. Tell the user: "A browser window should open for Google sign-in. Please complete the sign-in, then come back and tell me when you're done."
+2. Tell the user: "A browser window should open for Google sign-in. Please complete the sign-in, then tell me when you're done."
 
-3. After the user confirms, verify auth worked:
+3. After user confirms, verify:
 ```
 powershell -Command "& 'GCLOUD_CMD' auth list --format='value(account)' 2>$null"
 ```
 
-4. Set the project:
+4. Set project:
 ```
 powershell -Command "& 'GCLOUD_CMD' config set project path26-489205"
 ```
 
-### Verify auth on all platforms
-
-```bash
-gcloud auth list --format='value(account)' | head -1
-gcloud config get-value project
-```
-
-On Windows, wrap in `powershell -Command "& 'GCLOUD_CMD' ..."` as above.
-
-If no account is shown, repeat the auth flow. If project is wrong, set it with `gcloud config set project path26-489205`.
-
 ---
 
-## Step 5: Create the cloud workspace
+## Step 6: Create the cloud workspace
 
 Tell the user: "Creating your cloud workspace now. This takes about 2-3 minutes..."
+
+### Prepare label values
+
+Sanitize USER_EMAIL and PROJECT_NAME for GCP labels:
+- Lowercase only
+- Replace `@`, `.`, and any non-alphanumeric characters with `-`
+- Max 63 characters
+- Example: `ben@example.com` → `ben-example-com`
+
+**Save sanitized values as OWNER_LABEL and PROJECT_LABEL.**
 
 ### macOS/Linux
 
@@ -208,15 +245,23 @@ ZONE="${GCP_GCE_ZONE:-europe-west1-b}"
 TEMPLATE="${GCP_GCE_INSTANCE_TEMPLATE:-freshvibe-gce-template}"
 DISK_NAME="${INSTANCE_ID}-home"
 
+# Sanitize labels
+OWNER_LABEL=$(echo "USER_EMAIL" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-63)
+PROJECT_LABEL=$(echo "PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-63)
+
+# Create persistent storage
 gcloud compute disks create "$DISK_NAME" \
   --project="$PROJECT_ID" --zone="$ZONE" \
   --size=10GB --type=pd-balanced \
-  --labels=managed-by=freshvibe --quiet
+  --labels="managed-by=freshvibe,owner=$OWNER_LABEL,project=$PROJECT_LABEL" \
+  --quiet
 
+# Create the cloud computer with labels and metadata
 gcloud compute instances create "$INSTANCE_ID" \
   --project="$PROJECT_ID" --zone="$ZONE" \
   --source-instance-template="$TEMPLATE" \
-  --labels=managed-by=freshvibe \
+  --labels="managed-by=freshvibe,owner=$OWNER_LABEL,project=$PROJECT_LABEL" \
+  --metadata="freshvibe-owner-email-b64=$(echo -n 'USER_EMAIL' | base64),freshvibe-project-ids-b64=$(echo -n '[\"PROJECT_NAME\"]' | base64)" \
   --disk="name=$DISK_NAME,device-name=freshvibe-home,mode=rw,boot=no,auto-delete=no" \
   --quiet
 
@@ -225,29 +270,54 @@ echo "Created: $INSTANCE_ID"
 
 ### Windows
 
-Run each gcloud command separately using the full path. Replace GCLOUD_CMD with the path found in Step 2.
-
 Generate instance ID:
 ```
 powershell -Command "$id = 'freshvibe-' + -join((48..57)+(97..102)|Get-Random -Count 8|%%{[char]$_}); Write-Output $id"
 ```
 **Save this output as INSTANCE_ID.**
 
-Create disk (replace INSTANCE_ID with the actual value):
+Encode metadata values:
 ```
-powershell -Command "& 'GCLOUD_CMD' compute disks create 'INSTANCE_ID-home' --project=path26-489205 --zone=europe-west1-b --size=10GB --type=pd-balanced --labels=managed-by=freshvibe --quiet"
+powershell -Command "[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('USER_EMAIL'))"
+```
+**Save as EMAIL_B64.**
+```
+powershell -Command "[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('[""PROJECT_NAME""]'))"
+```
+**Save as PROJECT_B64.**
+
+Create disk:
+```
+powershell -Command "& 'GCLOUD_CMD' compute disks create 'INSTANCE_ID-home' --project=path26-489205 --zone=europe-west1-b --size=10GB --type=pd-balanced --labels=managed-by=freshvibe,owner=OWNER_LABEL,project=PROJECT_LABEL --quiet"
 ```
 
 Create instance:
 ```
-powershell -Command "& 'GCLOUD_CMD' compute instances create 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --source-instance-template=freshvibe-gce-template --labels=managed-by=freshvibe --disk='name=INSTANCE_ID-home,device-name=freshvibe-home,mode=rw,boot=no,auto-delete=no' --quiet"
+powershell -Command "& 'GCLOUD_CMD' compute instances create 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --source-instance-template=freshvibe-gce-template --labels=managed-by=freshvibe,owner=OWNER_LABEL,project=PROJECT_LABEL --metadata=freshvibe-owner-email-b64=EMAIL_B64,freshvibe-project-ids-b64=PROJECT_B64 --disk='name=INSTANCE_ID-home,device-name=freshvibe-home,mode=rw,boot=no,auto-delete=no' --quiet"
 ```
+
+### After creation: get the external IP
+
+```bash
+gcloud compute instances describe "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --format='value(networkInterfaces[0].accessConfigs[0].natIP)'
+```
+
+Windows:
+```
+powershell -Command "& 'GCLOUD_CMD' compute instances describe 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --format='value(networkInterfaces[0].accessConfigs[0].natIP)'"
+```
+
+**Save this as EXTERNAL_IP.** If empty, the instance has no external IP (IAP tunneling will be used instead).
+
+Tell the user:
+- If EXTERNAL_IP exists: "Your cloud computer is at EXTERNAL_IP. Once it's running, services on port 3000 will be accessible at http://EXTERNAL_IP:3000 (if you start a dev server)."
+- If no external IP: "Your cloud computer doesn't have a public IP. We'll use a secure tunnel to connect."
 
 ---
 
-## Step 6: Wait for the cloud computer to be ready
+## Step 7: Wait for the cloud computer to be ready
 
-Tell the user: "Waiting for your cloud computer to start (2-4 minutes)..."
+Tell the user: "Waiting for your cloud computer to start (2-4 minutes on first boot)..."
 
 ### macOS/Linux
 
@@ -263,28 +333,32 @@ done
 
 ### Windows
 
-Run this check repeatedly (every 10 seconds, up to 30 times). Each attempt is a separate command:
-
+Run this check every 10 seconds, up to 30 times:
 ```
 powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='curl -sf http://localhost:8080/health' --quiet 2>$null"
 ```
-
-If exit code is 0 and output is non-empty, the machine is ready. If it fails, wait 10 seconds and try again. After 5 minutes of failures, tell the user something may be wrong and check troubleshooting.
+If exit code 0 and output is non-empty → ready. Otherwise wait 10 seconds and retry.
 
 ---
 
-## Step 7: Install and start OpenCode on the cloud computer
+## Step 8: Install and start OpenCode on the cloud computer
 
 ### macOS/Linux
 
 ```bash
 OPENCODE_PASSWORD="$(openssl rand -hex 16)"
 
+# Install opencode
 gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
-  --command='curl -fsSL https://opencode.ai/install | bash; echo "export PATH=\$HOME/.opencode/bin:\$PATH" >> ~/.bashrc'
+  --command='curl -fsSL https://opencode.ai/install | bash'
 
+# Add to PATH
 gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
-  --command="export PATH=\$HOME/.opencode/bin:\$PATH; tmux kill-session -t oc 2>/dev/null; tmux new-session -d -s oc 'OPENCODE_SERVER_PASSWORD=$OPENCODE_PASSWORD opencode serve --port 4096 --hostname 0.0.0.0'"
+  --command='grep -q opencode ~/.bashrc || echo "export PATH=\$HOME/.opencode/bin:\$PATH" >> ~/.bashrc'
+
+# Start server in tmux (single simple command)
+gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
+  --command="PATH=\$HOME/.opencode/bin:\$PATH tmux new-session -d -s oc 'OPENCODE_SERVER_PASSWORD=$OPENCODE_PASSWORD opencode serve --port 4096 --hostname 0.0.0.0'"
 
 echo "Password: $OPENCODE_PASSWORD"
 ```
@@ -297,33 +371,34 @@ powershell -Command "$p = -join((48..57)+(65..90)+(97..122)|Get-Random -Count 32
 ```
 **Save this output as OPENCODE_PASSWORD.**
 
-Install opencode on remote (single simple command, no special quoting):
+Install opencode on remote:
 ```
 powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='curl -fsSL https://opencode.ai/install | bash'"
 ```
 
-Start the server. **IMPORTANT**: Keep the remote command simple — no `||`, no `2>/dev/null`, no nested quotes. Run two separate SSH commands:
+Start the server. **Run exactly this command** — note: NO `&&`, NO `||`, NO `2>/dev/null`, NO `export`. The `PATH=...` prefix sets PATH for just this command, and the entire tmux command argument is wrapped in single quotes:
 
-Kill any existing session:
 ```
-powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='tmux kill-session -t oc'"
+powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='PATH=/home/ben/.opencode/bin:/usr/local/bin:/usr/bin:/bin tmux new-session -d -s oc OPENCODE_SERVER_PASSWORD=OPENCODE_PASSWORD opencode serve --port 4096 --hostname 0.0.0.0'"
 ```
-(This may fail with "no session" — that's fine, ignore the error.)
 
-Start the server:
+**IMPORTANT**: In the tmux command above, `OPENCODE_SERVER_PASSWORD=OPENCODE_PASSWORD` is passed as **arguments to tmux**, NOT as a shell export. tmux treats everything after `-s oc` as the command and its arguments. This is intentional — it avoids all quoting problems.
+
+**IMPORTANT**: Replace `/home/ben/` with the actual remote user's home directory. To find it:
 ```
-powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='export PATH=$HOME/.opencode/bin:$PATH && tmux new-session -d -s oc OPENCODE_SERVER_PASSWORD=OPENCODE_PASSWORD opencode serve --port 4096 --hostname 0.0.0.0'"
+powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='echo $HOME'"
 ```
-(Replace OPENCODE_PASSWORD with the actual password value.)
 
 Verify it's running:
 ```
-powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='tmux has-session -t oc && echo RUNNING'"
+powershell -Command "& 'GCLOUD_CMD' compute ssh 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --command='tmux has-session -t oc'"
 ```
+
+If this returns exit code 0 → server is running. If it shows "no server running on /tmp/tmux-..." that means the tmux command above didn't start properly. Check the remote PATH and try again.
 
 ---
 
-## Step 8: Create tunnel and connect
+## Step 9: Create tunnel and connect
 
 ### macOS/Linux
 
@@ -334,33 +409,37 @@ gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" \
 opencode attach http://localhost:4096 --password "$OPENCODE_PASSWORD"
 ```
 
-### Windows — use IAP tunnel (avoids PuTTY problems)
-
-**CRITICAL**: On Windows, `gcloud compute ssh -- -L ...` uses PuTTY which does NOT support OpenSSH flags like `-L`, `-N`, `-f`. This will show "unknown option" popup errors. **Use IAP tunnel instead:**
+### Windows — use IAP tunnel (PuTTY cannot do SSH port forwarding)
 
 Start IAP tunnel in background:
 ```
 powershell -Command "Start-Process -NoNewWindow -FilePath 'GCLOUD_CMD' -ArgumentList 'compute','start-iap-tunnel','INSTANCE_ID','4096','--local-host-port=localhost:4096','--project=path26-489205','--zone=europe-west1-b'"
 ```
 
-Wait for tunnel to establish:
+Wait for tunnel:
 ```
 powershell -Command "Start-Sleep -Seconds 5"
 ```
 
-Test the tunnel is working:
+Test tunnel:
 ```
 powershell -Command "try { $r = Invoke-WebRequest -Uri 'http://localhost:4096' -UseBasicParsing -TimeoutSec 5; Write-Output 'TUNNEL_OK' } catch { Write-Output 'TUNNEL_FAILED' }"
 ```
 
-If TUNNEL_FAILED, wait 5 more seconds and try again. If it keeps failing, the OpenCode server may not have started — go back to Step 7 and verify.
+If TUNNEL_FAILED, wait 5 more seconds and retry. If it keeps failing, the OpenCode server may not have started — go back to Step 8.
 
-Connect OpenCode (replace OPENCODE_CMD with the path from Step 3):
+Connect:
 ```
 powershell -Command "& 'OPENCODE_CMD' attach http://localhost:4096 --password 'OPENCODE_PASSWORD'"
 ```
 
-Tell the user: "You're connected! OpenCode is now running on your cloud computer."
+### After connecting, tell the user:
+
+> "You're connected! OpenCode is now running on your cloud computer."
+
+If the instance has an external IP, also tell them:
+
+> "Your workspace is tagged with your email (USER_EMAIL) and project (PROJECT_NAME). If you start a dev server on port 3000, it'll be accessible at http://EXTERNAL_IP:3000"
 
 ---
 
@@ -368,12 +447,12 @@ Tell the user: "You're connected! OpenCode is now running on your cloud computer
 
 ### macOS/Linux
 ```bash
-gcloud compute instances list --project="${GCP_PROJECT_ID:-path26-489205}" --zones="${GCP_GCE_ZONE:-europe-west1-b}" --filter='labels.managed-by=freshvibe' --format='table(name,status,creationTimestamp)'
+gcloud compute instances list --project="${GCP_PROJECT_ID:-path26-489205}" --zones="${GCP_GCE_ZONE:-europe-west1-b}" --filter='labels.managed-by=freshvibe' --format='table(name,status,labels.owner,labels.project,networkInterfaces[0].accessConfigs[0].natIP)'
 ```
 
 ### Windows
 ```
-powershell -Command "& 'GCLOUD_CMD' compute instances list --project=path26-489205 --zones=europe-west1-b --filter='labels.managed-by=freshvibe' --format='table(name,status,creationTimestamp)'"
+powershell -Command "& 'GCLOUD_CMD' compute instances list --project=path26-489205 --zones=europe-west1-b --filter='labels.managed-by=freshvibe' --format='table(name,status,labels.owner,labels.project,networkInterfaces[0].accessConfigs[0].natIP)'"
 ```
 
 ---
@@ -384,7 +463,7 @@ powershell -Command "& 'GCLOUD_CMD' compute instances list --project=path26-4892
 gcloud compute instances stop "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE" --quiet
 ```
 
-On Windows: `powershell -Command "& 'GCLOUD_CMD' compute instances stop 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --quiet"`
+Windows: `powershell -Command "& 'GCLOUD_CMD' compute instances stop 'INSTANCE_ID' --project=path26-489205 --zone=europe-west1-b --quiet"`
 
 The machine auto-stops after 15 minutes of inactivity. Your files are saved.
 
@@ -419,12 +498,21 @@ gcloud compute ssh "$INSTANCE_ID" --project="$PROJECT_ID" --zone="$ZONE"
 
 **Windows `curl` note**: PowerShell aliases `curl` to `Invoke-WebRequest`. Use `curl.exe` for real curl or use `Invoke-WebRequest -Uri URL -UseBasicParsing`.
 
+**tmux "no server running" error**: This means no tmux session exists. It's normal when first connecting or after `tmux kill-session`. Just start a new session.
+
+**"External IP not found; defaulting to IAP tunneling"**: This is normal — the instance may not have a public IP. IAP tunneling works fine. Do NOT try to fix this.
+
 ---
 
 ## Error recovery rules
 
 - If a command fails 3 times with the same error, **stop and tell the user** what's wrong. Do not keep retrying.
-- If `gcloud auth login` times out, use the separate-window approach from Step 4.
-- If SSH tunneling fails on Windows with PuTTY errors, switch to IAP tunnel.
-- If quoting is causing errors in `gcloud compute ssh --command=`, simplify: use single quotes, avoid `||`, `&&`, `2>/dev/null`. Run multiple separate SSH commands instead of one complex one.
-- Never invent gcloud component names or config properties. If unsure, run `gcloud components list` or `gcloud config list`.
+- If `gcloud auth login` times out on Windows, use the separate-window approach from Step 5.
+- If SSH tunneling fails on Windows with PuTTY errors, use IAP tunnel (Step 9).
+- If `gcloud compute ssh --command=` fails with quoting errors:
+  - Remove ALL `&&` — use `;` or separate SSH commands
+  - Remove ALL `|| true` and `2>/dev/null`
+  - Use single quotes around the `--command=` value
+  - Run one simple command per SSH invocation
+- Never invent gcloud component names or config properties.
+- The `tmux new-session -d -s NAME CMD ARGS` syntax passes CMD and ARGS directly. No shell quoting needed for the command — just space-separated values.
